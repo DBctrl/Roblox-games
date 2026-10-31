@@ -52,9 +52,13 @@ export type CharacterApi = {
 	setMovementLocked: ((player: Player, reason: string, locked: boolean) -> ())?,
 }
 
--- Grant fn contract (architecture 1b, 3c, 4e): mutates only `data`, synchronously, inside MonetizationService's
--- one DataService.update that also records the receipt id; returns false = cannot grant now (NotProcessedYet).
-export type GrantFn = (player: Player, key: Types.ProductKey, data: ProfileData) -> boolean
+-- Grant fn contract (architecture 1b, 3c, 4e, section 8 CR-I8): mutates only `data`, synchronously, inside
+-- MonetizationService's one DataService.update that also records the receipt id; returns false = cannot grant now
+-- (NotProcessedYet; any hook is discarded). It never messages the client. Whatever the player should see goes in
+-- the optional OnCommitted hook, which MonetizationService runs once after the save holding the receipt id is
+-- confirmed. The hook may read the live profile and refresh attributes; it must not write the profile.
+export type OnCommitted = (player: Player) -> ()
+export type GrantFn = (player: Player, key: Types.ProductKey, data: ProfileData) -> (boolean, OnCommitted?)
 
 export type MonetizationApi = {
 	EntitlementsChanged: RBXScriptSignal?,
