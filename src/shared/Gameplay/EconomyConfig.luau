@@ -133,6 +133,32 @@ EconomyConfig.DUEL_DECLINE_MUTE_COUNT = 3 -- declines in a row from one target .
 EconomyConfig.DUEL_MUTE_SEC = 10 * 60 -- ... mute the challenger for that target this long
 EconomyConfig.DUEL_BLOCK_MAX = 50 -- session block list size (architecture 2 #12)
 
+-- Daily reward calendar (GDD 10, free only). Day = index 1..7 of the current streak; missing a UTC day restarts
+-- at Day 1. `coinSec` = seconds of the player's own best-boss coins/s (BossService.bestCoinsPerSec). No paid item
+-- changes these rows; VIP adds only DAILY_VIP_HYPE_SEC of Hype Snack per claim (GDD 8, 10).
+export type DailyReward = {
+	coinSec: number?, -- coins = floor(coinSec x best-boss coins/s)
+	hypeSec: number?, -- free Hype Snack seconds (2 h cap applies)
+	coinSnackSec: number?, -- free-only Coin Snack seconds (2 h cap applies)
+	freeHatch: boolean?, -- one free coin-egg hatch of the best unlocked world (Basic in v1)
+	cosmetic: string?, -- kept forever (entitlements.cosmetics)
+}
+local daily: { DailyReward } = {
+	{ coinSec = 2 * 60 }, -- D1
+	{ hypeSec = 10 * 60 }, -- D2
+	{ coinSec = 5 * 60 }, -- D3
+	{ freeHatch = true }, -- D4
+	{ coinSnackSec = 15 * 60 }, -- D5
+	{ coinSec = 10 * 60 }, -- D6
+	{ cosmetic = "WeekStreakAura", coinSec = 15 * 60 }, -- D7
+}
+for _, row in daily do
+	table.freeze(row)
+end
+EconomyConfig.DAILY_REWARDS = table.freeze(daily)
+EconomyConfig.DAILY_VIP_HYPE_SEC = 10 * 60
+EconomyConfig.DAY_SEC = 24 * 60 * 60 -- UTC day length for the calendar
+
 -- Tools (GDD 4.2; reset on rebirth) ----------------------------------------------------------------------
 local tools: { Tool } = {
 	{ name = "Pocket Comb", mpPerTap = 1, cost = 0, world = 1 },
