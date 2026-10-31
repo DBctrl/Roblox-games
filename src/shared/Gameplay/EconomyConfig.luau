@@ -64,7 +64,9 @@ EconomyConfig.INVENTORY_CAP = 60
 EconomyConfig.INVENTORY_HARD_CAP = 66 -- paid receipts may exceed INVENTORY_CAP by up to 6 (architecture 4b)
 EconomyConfig.INTERACT_RANGE = 20 -- studs, boss stage and egg stand
 EconomyConfig.ODDS_TOTAL = 10000 -- egg weights sum to this (0.5% = 50)
-EconomyConfig.COIN_EGGS_POLICY_GATED = false -- option A (D-021, D-023): coin eggs open to everyone
+-- Option A (D-021, D-023): coin eggs open to everyone. Kept as a documented constant (architecture 1c);
+-- no code reads it since T-029 removed the gate, so setting it to true changes nothing.
+EconomyConfig.COIN_EGGS_POLICY_GATED = false
 
 -- Boss fights (GDD 4, 4.4) -------------------------------------------------------------------------------
 EconomyConfig.BOSS_FIGHT_SEC = 3 -- pose-off, then the award

@@ -244,13 +244,8 @@ function PetService.tryHatch(player: Player, eggId: Types.EggId, count: number):
 	if egg.currency ~= "Coins" then
 		return false, "RobuxEgg" -- Robux eggs only through RequestPurchase (architecture 2 #6)
 	end
-	if EconomyConfig.COIN_EGGS_POLICY_GATED then
-		local compliance = Deps.compliance()
-		local allowed = compliance and compliance.paidRandomAllowed
-		if allowed == nil or not allowed(player) then
-			return false, "Restricted"
-		end
-	end
+	-- Option A (D-021): coin eggs are not paid random items, so there is no PolicyService gate here; restricted
+	-- players hatch coin eggs like everyone else. The PaidRandomAllowed gate applies to Robux eggs only (4d).
 	if not Guard.isIntInRange(count, 1, EconomyConfig.HATCH_MULTI_COUNT) then
 		return false, "BadArgs"
 	end
