@@ -1,0 +1,14 @@
+-- qa selftest fixture for check_handlers.py --selftest. NOT game code: never synced, never linted.
+-- Follows every rule, so BuyTool must PASS.
+local S = {}
+function S.Start()
+	RateLimit.connect("BuyTool", function(p, i)
+		if typeof(i) ~= "number" or i ~= i or math.abs(i) == math.huge or i % 1 ~= 0 then
+			return
+		end
+		if not DataService.isLoaded(p) then
+			return
+		end
+	end)
+end
+return S
