@@ -26,6 +26,7 @@
 -- Grant registry (4e): Gameplay services call `registerGrant(kind, fn)` in their Start(). This service registers
 -- Entitlement and Donation itself. Attributes PaidTier, Vip, AutoClickerOwned, StarterPackOwned are written here
 -- on load and after every grant; `EntitlementsChanged` fires after every grant.
+-- Test seams for qa (QA-F9, D-069): `processReceipt`, `grantEntry`, `getGrant`. Game code never calls them.
 -- Logs never contain names, user ids or other personal info.
 
 local MarketplaceService = game:GetService("MarketplaceService")
@@ -110,20 +111,14 @@ local function confirmSaved(player: Player, purchaseId: string): boolean
 	end, SAVE_CONFIRM_SEC)
 end
 
-local function processReceiptInner(info: { [string]: any }): Enum.ProductPurchaseDecision
-	local playerId, productId, rawPurchaseId = info.PlayerId, info.ProductId, info.PurchaseId
-	if type(playerId) ~= "number" or type(productId) ~= "number" or rawPurchaseId == nil then
-		warn("MonetizationService: malformed receipt")
-		return Enum.ProductPurchaseDecision.NotProcessedYet
-	end
-	local purchaseId = tostring(rawPurchaseId)
-
-	local player = Players:GetPlayerByUserId(playerId)
-	if player == nil then
-		return Enum.ProductPurchaseDecision.NotProcessedYet -- Roblox retries when they next join
-	end
-	local data = DataService.waitForData(player, RECEIPT_LOAD_WAIT_SEC)
-	if data == nil then
+-- 3c steps 2, 4, 5 for one catalog entry: dedupe, the grant in one update, then wait for the save that holds it.
+local function grantEntryInner(
+	player: Player,
+	entry: ProductCatalog.Entry,
+	purchaseId: string
+): Enum.ProductPurchaseDecision
+	local data = DataService.getData(player)
+	if data == nil or not DataService.isLoaded(player) then
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
 
@@ -134,11 +129,6 @@ local function processReceiptInner(info: { [string]: any }): Enum.ProductPurchas
 			else Enum.ProductPurchaseDecision.NotProcessedYet
 	end
 
-	local entry = ProductCatalog.byProductId(productId)
-	if entry == nil then
-		warn(`MonetizationService: receipt for unknown product id {productId}; not processed`)
-		return Enum.ProductPurchaseDecision.NotProcessedYet
-	end
 	local grant = grants[entry.grantKind]
 	if grant == nil then
 		warn(
@@ -197,6 +187,57 @@ local function processReceiptInner(info: { [string]: any }): Enum.ProductPurchas
 	return Enum.ProductPurchaseDecision.PurchaseGranted
 end
 
+local function processReceiptInner(info: { [string]: any }): Enum.ProductPurchaseDecision
+	local playerId, productId, rawPurchaseId = info.PlayerId, info.ProductId, info.PurchaseId
+	if type(playerId) ~= "number" or type(productId) ~= "number" or rawPurchaseId == nil then
+		warn("MonetizationService: malformed receipt")
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	local purchaseId = tostring(rawPurchaseId)
+
+	local player = Players:GetPlayerByUserId(playerId)
+	if player == nil then
+		return Enum.ProductPurchaseDecision.NotProcessedYet -- Roblox retries when they next join
+	end
+	local data = DataService.waitForData(player, RECEIPT_LOAD_WAIT_SEC)
+	if data == nil then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	-- Already granted earlier (this session or a previous one): never grant again, just make sure it is saved.
+	if PurchaseRules.savedHasReceipt(data :: any, purchaseId) then
+		return if confirmSaved(player, purchaseId)
+			then Enum.ProductPurchaseDecision.PurchaseGranted
+			else Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	local entry = ProductCatalog.byProductId(productId)
+	if entry == nil then
+		warn(`MonetizationService: receipt for unknown product id {productId}; not processed`)
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	return grantEntryInner(player, entry, purchaseId)
+end
+
+-- Runs `fn` with the PurchaseId marked in flight (one run per id per server) and every error caught.
+local function runGuarded(
+	purchaseId: string,
+	fn: (...any) -> Enum.ProductPurchaseDecision,
+	...: any
+): Enum.ProductPurchaseDecision
+	if inFlight[purchaseId] then
+		return Enum.ProductPurchaseDecision.NotProcessedYet -- the running call finishes it; Roblox retries
+	end
+	inFlight[purchaseId] = true
+	local ok, result = pcall(fn, ...)
+	inFlight[purchaseId] = nil
+	if not ok then
+		warn(`MonetizationService: ProcessReceipt error: {result}`)
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	return result
+end
+
 local function processReceipt(info: { [string]: any }): Enum.ProductPurchaseDecision
 	local purchaseId = if type(info) == "table" and info.PurchaseId ~= nil
 		then tostring(info.PurchaseId)
@@ -205,17 +246,7 @@ local function processReceipt(info: { [string]: any }): Enum.ProductPurchaseDeci
 		warn("MonetizationService: receipt without PurchaseId")
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
-	if inFlight[purchaseId] then
-		return Enum.ProductPurchaseDecision.NotProcessedYet -- the running call finishes it; Roblox retries
-	end
-	inFlight[purchaseId] = true
-	local ok, result = pcall(processReceiptInner, info)
-	inFlight[purchaseId] = nil
-	if not ok then
-		warn(`MonetizationService: ProcessReceipt error: {result}`)
-		return Enum.ProductPurchaseDecision.NotProcessedYet
-	end
-	return result
+	return runGuarded(purchaseId, processReceiptInner, info)
 end
 
 -- RequestPurchase ----------------------------------------------------------------------------------------
@@ -320,6 +351,32 @@ end
 function MonetizationService.owns(player: Player, key: Types.ProductKey): boolean
 	local data = DataService.getData(player)
 	return data ~= nil and PurchaseRules.owns(data, key)
+end
+
+-- Test seams (QA-F9, D-069; architecture 1b). For qa only: game code never calls these.
+
+-- The exact function assigned to MarketplaceService.ProcessReceipt. Yields.
+MonetizationService.processReceipt = processReceipt
+
+-- 3c steps 2, 4 and 5 for a catalog entry, so tests can run a grant while product ids are still 0. Same in-flight
+-- guard and error handling as ProcessReceipt. Yields.
+function MonetizationService.grantEntry(
+	player: Player,
+	entry: ProductCatalog.Entry,
+	purchaseId: string
+): Enum.ProductPurchaseDecision
+	if typeof(player) ~= "Instance" or not player:IsA("Player") or type(entry) ~= "table" then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	if type(purchaseId) ~= "string" or purchaseId == "" then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	return runGuarded(purchaseId, grantEntryInner, player, entry, purchaseId)
+end
+
+-- Read-only view of the grant registry: the fn registered for a GrantKind, or nil.
+function MonetizationService.getGrant(kind: Types.GrantKind): GrantFn?
+	return grants[kind]
 end
 
 -- Lifecycle ------------------------------------------------------------------------------------------
