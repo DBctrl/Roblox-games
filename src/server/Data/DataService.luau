@@ -177,13 +177,33 @@ local function load(player: Player)
 	end
 
 	local data = session.data
-	if not ProfileSchema.migrate(data) then
-		warn("DataService: save is from a newer schema; not loading it")
+	-- Migrate and reconcile a copy inside pcall (QA-11). The live table is touched only after both succeed, so a
+	-- corrupt or newer save is released unchanged (the lock is freed, the stored data stays as it was).
+	local copy = ProfileSchema.deepCopy(data)
+	local called, migrated, why = pcall(function()
+		local ok, migrateReason = ProfileSchema.migrate(copy)
+		if ok then
+			ProfileSchema.reconcile(copy)
+		end
+		return ok, migrateReason
+	end)
+	if not called or not migrated then
+		local failReason = if called then why else "migrate error"
+		warn(`DataService: save not loaded ({failReason}); releasing it unchanged and kicking`)
 		session.endSession()
-		player:Kick(KICK_NEWER_SAVE)
+		if player.Parent == Players then
+			player:Kick(if failReason == "newer" then KICK_NEWER_SAVE else KICK_LOAD_FAILED)
+		end
 		return
 	end
-	ProfileSchema.reconcile(data)
+	for key in data do
+		if copy[key] == nil then
+			data[key] = nil
+		end
+	end
+	for key, value in copy do
+		data[key] = value -- in place: the backend saves this exact table
+	end
 	sanitize(data :: any)
 
 	local rankValue, rebirthsValue = makeLeaderstats(player)
