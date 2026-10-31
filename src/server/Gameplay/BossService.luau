@@ -142,7 +142,7 @@ local function award(player: Player, boss: Boss, auto: boolean)
 	task.delay(EconomyConfig.BOSS_COOLDOWN_SEC, ActivityService.finish, player, "BossFight")
 end
 
--- Starts a fight. `auto` = Auto-Mog (sprint 2): skips the distance check, everything else applies.
+-- Starts a fight. `auto == true` = Auto-Mog (IdleService): skips the distance check, everything else applies.
 function BossService.tryFight(player: Player, bossId: string, auto: boolean): (boolean, string?)
 	local dataApi = Deps.data()
 	local data = dataApi.getData(player)
@@ -163,7 +163,7 @@ function BossService.tryFight(player: Player, bossId: string, auto: boolean): (b
 	if zone.getWorld(player) ~= boss.world then
 		return false, "WrongWorld"
 	end
-	if not auto and not zone.isNearBoss(player, bossId) then
+	if auto ~= true and not zone.isNearBoss(player, bossId) then -- QA-4: only a real `true` skips range
 		return false, "TooFar"
 	end
 	if currentMp(data) < boss.mpNeed then
@@ -172,7 +172,7 @@ function BossService.tryFight(player: Player, bossId: string, auto: boolean): (b
 	if not ActivityService.tryBegin(player, "BossFight") then
 		return false, "Busy"
 	end
-	task.delay(EconomyConfig.BOSS_FIGHT_SEC, award, player, boss, auto)
+	task.delay(EconomyConfig.BOSS_FIGHT_SEC, award, player, boss, auto == true)
 	return true
 end
 
