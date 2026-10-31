@@ -167,3 +167,6 @@ Append only. Format:
 
 ## D-052 2026-10-31 - QA-F6: 12:28 vs the 12:30 band is within sim tolerance
 **By:** team-lead (conflict resolution). **Decision:** A first rebirth at 12:28 (3 taps/s, pods + boss) against a band that starts at 12:30 counts as a pass. qa's timing_sim uses a ±15 s tolerance at band edges. No GDD number changes. **Why:** a 2 s difference is below the sim's modelling precision. Changing the economy for it would cost a scenarist pass and gain nothing. **Approved by owner:** n.a.
+
+## D-053 2026-10-31 - Sprint 2 closed in backlog; sprint 3 opened; D-038 unblocks monetization
+**By:** project-manager. **Decision:** (1) Sprint-2 tickets are marked done in code (main 159a05d); Studio checks stay pending on the Mac (T-094). (2) The 11 items still Open in docs/qa/bugs.md are copied into the backlog with the fix seen on main; qa closes them. (3) Monetization tickets are in progress; only the owner's Creator Hub products block go-live. D-038 approves 15 of the 23 products; Speed Sneakers, Neon Pup, Neon Icon Fit and tips are not offered and T-075 stays blocked. (4) New T-095 (gameplay, S): rename the `equipped` local in PetService.inventoryString and set UID_MAX to 1e12-1. **Why:** keeps one source of truth for what is built and what waits on the owner. **Approved by owner:** n.a.
