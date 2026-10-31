@@ -139,4 +139,84 @@ function TestKit.tryRequire(parent: Instance?, path: { string }): any
 	return mod
 end
 
+-- First function field of `mod` among `names`, or nil. For test seams whose name is not fixed yet (QA-F8, QA-F9).
+function TestKit.firstFn(mod: any, names: { string }): ((...any) -> ...any)?
+	if type(mod) ~= "table" then
+		return nil
+	end
+	for _, n in names do
+		if type(mod[n]) == "function" then
+			return mod[n]
+		end
+	end
+	return nil
+end
+
+-- Players with `DataLoaded`, waiting up to `timeoutSec` (default 20) for at least `n` of them. Returns what it has.
+function TestKit.loadedPlayers(n: number, timeoutSec: number?): { Player }
+	local Players = game:GetService("Players")
+	local deadline = os.clock() + (timeoutSec or 20)
+	local list: { Player } = {}
+	repeat
+		list = {}
+		for _, p in Players:GetPlayers() do
+			if p:GetAttribute("DataLoaded") == true then
+				table.insert(list, p)
+			end
+		end
+		if #list >= n then
+			break
+		end
+		task.wait(0.25)
+	until os.clock() > deadline
+	return list
+end
+
+-- Replaces `tbl[key]` with `value` for a test (fault injection). Returns a restore function, or nil when the table
+-- is frozen or the write fails (the caller SKIPs). Always call the restore, also on failure (use `TestKit.with`).
+function TestKit.patch(tbl: any, key: string, value: any): (() -> ())?
+	if type(tbl) ~= "table" or table.isfrozen(tbl) then
+		return nil
+	end
+	local old = tbl[key]
+	local ok = pcall(function()
+		tbl[key] = value
+	end)
+	if not ok then
+		return nil
+	end
+	return function()
+		tbl[key] = old
+	end
+end
+
+-- Runs `fn`, then every restore in `restores` (nil entries skipped), then re-raises any error from `fn`.
+function TestKit.with(restores: { (() -> ())? }, fn: () -> ())
+	local ok, err = pcall(fn)
+	local top = 0
+	for i in restores do
+		top = math.max(top, i)
+	end
+	for i = top, 1, -1 do
+		local r = restores[i]
+		if r then
+			r()
+		end
+	end
+	if not ok then
+		error(err, 0)
+	end
+end
+
+-- Number of keys in a table (inventory maps).
+function TestKit.count(t: any): number
+	local n = 0
+	if type(t) == "table" then
+		for _ in t do
+			n += 1
+		end
+	end
+	return n
+end
+
 return TestKit

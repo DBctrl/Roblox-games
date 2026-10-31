@@ -1,0 +1,23 @@
+-- check_grants.py selftest: both grants must PASS.
+local Monetization = require(script.Parent.MonetizationService)
+
+local function addPet(data, petId)
+	local uid = tostring(data.pets.nextUid)
+	data.pets.nextUid += 1
+	data.pets.inventory[uid] = { id = petId }
+end
+
+function PetService.grantFixedPet(_player, key, data)
+	addPet(data, ProductCatalog.get(key).petId)
+	return true
+end
+
+Monetization.registerGrant("FixedPet", PetService.grantFixedPet)
+
+Monetization.registerGrant("StarterPack", function(_player, key, data)
+	-- never data.coins here (GDD 8g)
+	addPet(data, "SparklePup")
+	data.boosts.hypeSec += 1800
+	data.entitlements.starterPack = true
+	return true
+end)

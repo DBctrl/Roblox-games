@@ -113,6 +113,72 @@ named role. Line numbers are for `main` at `dde2064` (build 1)._
   checks M = 1 + bonus) SKIPs until then. `python3 -I tests/static/check_authority.py` checks QA-5 statically
   now (PENDING until PetService exists; `--strict` makes it fail).
 
+### QA-F10 [architecture] `NotYetProcessed` is not a Roblox enum item   S2 (sprint 3, before T-056 merges)
+- **Found by:** qa (T-081), reading architecture v1.3 3c steps 1, 3, 4 and 5 and backlog T-056 ("NotYetProcessed").
+- **Expected:** `Enum.ProductPurchaseDecision.NotProcessedYet` (the two items are `NotProcessedYet` and
+  `PurchaseGranted`).
+- **Actual:** the docs say `NotYetProcessed`. Code copied from them errors when it indexes the enum, so every
+  "not now" path (player absent, unknown id, grant refused, save not confirmed) throws instead of answering.
+- **Fix:** integration-programmer corrects architecture 3c; project-manager corrects T-056. `check_grants.py` now
+  FAILs any `NotYetProcessed` in src.
+
+### QA-F11 [systems] A grant that writes and then fails leaves a partial grant, and the retry repeats it   S2 (sprint 3)
+- **Found by:** qa (T-081). `DataService.update` keeps changes made before an error (`DataService.luau:316-318`,
+  "Changes made before an error stay applied"). Architecture 3c step 4 says a false grant records nothing, but the
+  grant fn has already written to the live `data`.
+- **Steps:** a grant fn adds a pet, then errors (or returns false) on a later line. ProcessReceipt answers
+  NotProcessedYet with no PurchaseId saved, Roblox retries, and the pet is added again on every retry.
+- **Expected:** a failed or refused grant changes nothing (one purchase, one grant).
+- **Fix hint:** in ProcessReceipt step 4, run the grant on `ProfileSchema.deepCopy(data)`; if it returns true,
+  copy the changed top-level fields back and add the receipt in the same `update`. On false or error, drop the copy.
+- **Test:** `Purchase.spec.luau` "grant writes then fails: the partial write is rolled back (QA-F11)".
+
+### QA-F9 [systems] MonetizationService has no test entry, and every product id is 0, so receipts can't be driven   S3 (sprint 3)
+- **Found by:** qa (T-081). `ProcessReceipt` is a write-only callback, the grant registry is private, and
+  `byProductId(0)` is nil, so ProcessReceipt can't grant anything in Studio until the owner adds the 15 ids.
+- **Ask (Contract request through systems, architecture 1b):**
+  `MonetizationService.processReceipt(receiptInfo)` (the fn assigned to ProcessReceipt),
+  `MonetizationService.grantEntry(player, entry, purchaseId)` (steps 2, 4, 5 for a catalog entry; `processReceipt`
+  = steps 1 and 3 plus this), `MonetizationService.getGrant(kind)`. Call `DataService.saveAndConfirm` and
+  `Deps.compliance()` through the module table at call time, so qa can inject a save failure or a restricted player.
+- **Tests waiting on it:** `Purchase.spec.luau` (dedupe, grant false or throw, save failure, absent player, before
+  FirstWin, D-019 ladder, boost cap, restricted and allowed Robux eggs) and `GrantFirewall.spec.luau` (all 23 grant
+  fns on a profile copy). Both SKIP until then. `ProductCatalog.spec.luau` and `check_grants.py` run now.
+
+### QA-12 [gameplay] EconomyConfig still puts the Galaxy Egg in World 2 (GDD rev 3, D-058, says World 1)   S3 (sprint 3)
+- **Found by:** qa (team-lead note on D-058).
+- **File:** `src/shared/Gameplay/EconomyConfig.luau:265` (`GalaxyEgg.world = 2`).
+- **Expected:** `world = 1`, odds unchanged. The qa fixture `tests/shared/Fixtures/GddEggs.luau` is updated, and
+  `PetRoll.spec` now checks `world` for Robux eggs too, so that test FAILs until EconomyConfig changes.
+
+### QA-F12 [gameplay] `EconomyConfig.duelScore` is missing (architecture 4c names it)   S3 (sprint 3, T-049)
+- **Found by:** qa (T-068). `src/shared/Gameplay/EconomyConfig.luau` has the DUEL_* constants (lines 116-127) but
+  no `duelScore` function.
+- **Ask:** add `EconomyConfig.duelScore(taps, ownRank, oppRank): number` = taps x (1 + DUEL_RANK_STEP x
+  min(ownRank, oppRank + DUEL_RANK_EDGE)), exactly 3 parameters, and have DuelService score only through it.
+- **Tests:** `Duel.spec.luau` checks the formula, the +6% edge cap, finite output on junk input, and that the
+  function takes 3 parameters, so no pet, paid or boost input can be passed (`debug.info(fn, "a")`). It SKIPs until
+  then.
+
+### QA-F13 [gameplay] Duel and daily reward rules have no server-callable or pure entry   S3 (sprint 3, T-049/T-050/T-052)
+- **Found by:** qa (T-068). Architecture 1b gives DuelService only `isInDuel` and RewardService no functions, so
+  the caps, tap clamp, claim-twice and clock-skew rules can only be reached from a client remote.
+- **Ask (gameplay-internal helpers, as with `Util/PetRoll` in QA-F7; the public ones go to integration as a CR):**
+  - `Gameplay/Util/DuelRules.rewardAllowed(rewardLog, now, oppUserId): boolean` and
+    `DuelRules.acceptTaps(count, now, lastAccepted, activeStart, activeEnd, total): number` (pure).
+  - `Gameplay/Util/DailyCalendar.claim(daily, nowUnix): (boolean, newDaily?)` and
+    `DailyCalendar.reward(day, bestCoinsPerSec, vip)` (pure).
+  - Public: `DuelService.challenge(player, targetUserId)`, `respond(player, challengerUserId, accept)`,
+    `rematch(player, accept)`, and `RewardService.claimDaily(player)`; each remote handler calls one of them after
+    its type checks.
+- **Rules the tests pin (please confirm or tell qa):** a `rewardLog` entry with a future time (clock skew between
+  servers) still counts against the caps. A claim on a server whose clock is behind `lastClaimDay` is refused and
+  never lowers `lastClaimDay` or resets the streak. Rematches have no count cap of their own: the 2-per-opponent
+  per 15 min reward cap is what limits a rematch loop (GDD 6).
+- **Tests:** `Duel.spec.luau`, `DailyReward.spec.luau` (SKIP until then). `python3 -I tests/static/check_duel.py`
+  checks forfeit on leave, ring release, the reward caps, self-duel, tap clamp, no pet/paid/boost reads, and the
+  daily claim's server clock and VIP rule now (PENDING until the services exist).
+
 ## Closed
 
 ### QA-6 [qa] Static checker false positives   S3   (fixed in build 1 check)

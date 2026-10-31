@@ -55,9 +55,15 @@ def c2s_remotes() -> list[str]:
     return re.findall(r'^\s*(\w+)\s*=\s*\{[^}]*direction\s*=\s*"C2S"', text, re.M)
 
 
+# Selftest folders that belong to the other checkers (check_authority, check_grants, check_duel); skipped here.
+OTHER_SELFTESTS = {"authority", "grants", "duel"}
+
+
 def luau_files(src: str) -> list[str]:
     out = []
-    for base, _, files in os.walk(src):
+    for base, dirs, files in os.walk(src):
+        if os.path.abspath(src) == os.path.abspath(SELFTEST):
+            dirs[:] = [d for d in dirs if not (base == src and d in OTHER_SELFTESTS)]
         for name in files:
             if name.endswith((".luau", ".lua", ".fixture")):
                 out.append(os.path.join(base, name))

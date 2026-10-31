@@ -188,8 +188,9 @@ return function(t: TestKit.Suite)
 				t.eq(egg.currency, gdd.currency, `{eggId}.currency`)
 				if gdd.currency == "Coins" then
 					t.eq(egg.price, gdd.price, `{eggId}.price (coins)`)
-					t.eq(egg.world, gdd.world, `{eggId}.world`)
 				end
+				-- every egg, Robux eggs too: GDD rev 3 (D-058) moved the Galaxy Egg to World 1
+				t.eq(egg.world, gdd.world, `{eggId}.world`)
 				t.eq(#egg.pets, #gdd.pets, `{eggId} pet count`)
 				for i, row in gdd.pets do
 					local entry = egg.pets[i]
