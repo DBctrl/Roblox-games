@@ -52,6 +52,17 @@ local interactRange = DEFAULT_INTERACT_RANGE
 local worldOf: { [Player]: Types.WorldId } = {}
 local podOf: { [Player]: number } = {}
 local dataService: DataServiceLike? = nil
+local warnedMissing: { [string]: true } = {} -- map ids already reported missing (warn once each)
+
+-- QA-9: the layout fallback hides builder mistakes, so report each missing map id once.
+local function warnMissingOnce(kind: string, id: string)
+	local key = `{kind}:{id}`
+	if warnedMissing[key] then
+		return
+	end
+	warnedMissing[key] = true
+	warn(`[ZoneService] No {kind} tagged with id "{id}" in Workspace; using the MapLayout fallback position`)
+end
 
 local function rootPart(player: Player): BasePart?
 	local character = player.Character
@@ -210,6 +221,9 @@ end
 function ZoneService.getBossStagePosition(bossId: string): Vector3?
 	if typeof(bossId) ~= "string" or #bossId > MAX_BOSS_ID_LEN then
 		return nil
+	end
+	if MapLayout.getBossWorld(bossId) ~= nil and MapLayout.getBossStage(bossId) == nil then
+		warnMissingOnce("BossStage", bossId) -- missing or mistyped BossId (QA-9)
 	end
 	return MapLayout.getBossStagePosition(bossId)
 end
