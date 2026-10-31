@@ -454,36 +454,47 @@ end
 -- Each runs inside MonetizationService's one DataService.update (architecture 3c step 4): it mutates only `data`,
 -- never yields or calls DataService, and returns false WITHOUT touching `data` when it cannot grant. Receipt
 -- dedupe is MonetizationService's (receipt id stored in the same update), so a grant runs once per receipt.
--- Attribute writes, Notify and HatchResult are deferred until after that update. No grant touches coins.
+-- No grant fn messages the client (section 8 CR-I8, D-071): Notify, HatchResult, Hatched and the funnel step go in
+-- the returned OnCommitted hook, which MonetizationService runs only after the receipt save is confirmed. Only the
+-- attribute refresh (state, not a promise to the player) is deferred to right after the update. No grant touches coins.
 
 -- Paid pets that still fit under the hard cap (paid receipts may pass INVENTORY_CAP by up to 6, 4b).
 local function paidRoom(data: ProfileData, count: number): boolean
 	return inventoryCount(data) + count <= EconomyConfig.INVENTORY_HARD_CAP
 end
 
-local function afterGrant(player: Player, text: string?)
+-- Re-reads the live profile after MonetizationService's update; a dropped copy just refreshes unchanged state.
+local function refreshAfterUpdate(player: Player)
 	task.defer(function()
 		if player.Parent ~= Players then
 			return
 		end
 		refreshAttributes(player)
 		MultiplierService.refresh(player)
-		if text then
-			notify(player, "Success", text)
-		end
 	end)
 end
 
-local function refuseFull(player: Player)
-	task.defer(
-		notify,
-		player,
-		"Error",
-		"Pet inventory is full. Delete some pets and rejoin to receive your purchase"
-	)
+-- Post-commit "Success" toast for FixedPet / StarterPack.
+local function successHook(text: string): Deps.OnCommitted
+	return function(player: Player)
+		if player.Parent ~= Players then
+			return
+		end
+		refreshAttributes(player)
+		notify(player, "Success", text)
+	end
 end
 
-local function grantFixedPet(player: Player, key: Types.ProductKey, data: ProfileData): boolean
+-- Inventory full: the receipt stays unprocessed and Roblox retries it. Logged only; a grant fn never notifies.
+local function refuseFull(player: Player, key: Types.ProductKey)
+	print(`[PetService] receipt refused, pet inventory full: user {player.UserId} key {key}`)
+end
+
+local function grantFixedPet(
+	player: Player,
+	key: Types.ProductKey,
+	data: ProfileData
+): (boolean, Deps.OnCommitted?)
 	local entry = ProductCatalog.get(key)
 	local petId = entry and entry.petId
 	local pet = petId and EconomyConfig.PETS[petId]
@@ -491,18 +502,22 @@ local function grantFixedPet(player: Player, key: Types.ProductKey, data: Profil
 		return false -- Neon Pup is not on sale (D-038)
 	end
 	if not paidRoom(data, 1) then
-		refuseFull(player)
+		refuseFull(player, key)
 		return false
 	end
 	data.pets.inventory[takeUid(data)] = { id = petId }
-	afterGrant(player, `You got {pet.name}!`)
-	return true
+	refreshAfterUpdate(player)
+	return true, successHook(`You got {pet.name}!`)
 end
 
 -- Starter Pack: Sparkle Pup + 30 min Hype Snack + Rookie Shades + the once flag. No coins, no pod, no egg.
 -- The once rule is a prompt gate (MonetizationService); a second receipt that still arrives gets the same contents
 -- again, so Robux is never taken for nothing (D-063).
-local function grantStarterPack(player: Player, key: Types.ProductKey, data: ProfileData): boolean
+local function grantStarterPack(
+	player: Player,
+	key: Types.ProductKey,
+	data: ProfileData
+): (boolean, Deps.OnCommitted?)
 	local entry = ProductCatalog.get(key)
 	local petId = entry and entry.petId
 	local hypeSec = entry and entry.hypeSec
@@ -517,7 +532,7 @@ local function grantStarterPack(player: Player, key: Types.ProductKey, data: Pro
 		return false
 	end
 	if not paidRoom(data, 1) then
-		refuseFull(player)
+		refuseFull(player, key)
 		return false
 	end
 	if data.entitlements.starterPack then
@@ -527,14 +542,18 @@ local function grantStarterPack(player: Player, key: Types.ProductKey, data: Pro
 	data.boosts.hypeSec = Guard.clampFinite(data.boosts.hypeSec, 0, math.huge, 0) + hypeSec -- paid time never dropped
 	data.entitlements.cosmetics.RookieShades = true
 	data.entitlements.starterPack = true
-	afterGrant(player, "Starter Pack unlocked!")
-	return true
+	refreshAfterUpdate(player)
+	return true, successHook("Starter Pack unlocked!")
 end
 
 -- Robux egg receipt (T-073). Allowed players: `count` server rolls in order with the saved pity counter (true odds
 -- at the pity hatch). Restricted players (PaidRandomAllowed false, fail closed): the stated fixed pet from
 -- ProductCatalog.restrictedGrant (x3 for a 3-pack), no roll, pity unchanged, logged. Never nothing (D-016 #4).
-local function grantRobuxEgg(player: Player, key: Types.ProductKey, data: ProfileData): boolean
+local function grantRobuxEgg(
+	player: Player,
+	key: Types.ProductKey,
+	data: ProfileData
+): (boolean, Deps.OnCommitted?)
 	local entry = ProductCatalog.get(key)
 	local eggId = entry and entry.eggId
 	local egg = eggId and EconomyConfig.EGGS[eggId]
@@ -575,7 +594,7 @@ local function grantRobuxEgg(player: Player, key: Types.ProductKey, data: Profil
 		newPity = pity
 	end
 	if not paidRoom(data, #petIds) then
-		refuseFull(player)
+		refuseFull(player, key)
 		return false -- nothing written: the rolls above are discarded with the unprocessed receipt
 	end
 
@@ -605,33 +624,22 @@ local function grantRobuxEgg(player: Player, key: Types.ProductKey, data: Profil
 		)
 	end
 	local pityAfter = if newPity ~= nil then newPity else Guard.clampFinite(data.pity[id], 0, 1e6, 0)
-	-- QA-14: `data` is MonetizationService's copy, and this fn returns before anyone knows whether the copy is
-	-- committed. The deferred reveal runs after that update and only goes out if every granted pet is in the LIVE
-	-- profile, so a refused or released receipt sends no HatchResult and fires no Hatched (the retry reveals once).
-	task.defer(function()
-		if player.Parent ~= Players then
-			return
-		end
-		local live = Deps.data().getData(player)
-		if live == nil then
-			return
-		end
-		for _, pet in results do
-			local row = live.pets.inventory[pet.uid]
-			if row == nil or row.id ~= pet.petId then
-				return -- not committed: say nothing to the client and count no hatch
+	refreshAfterUpdate(player)
+	-- QA-14 / CR-I8: the reveal runs only once the save holding this receipt is confirmed, so a refused or unsaved
+	-- receipt sends no HatchResult and fires no Hatched (the retry that commits reveals once).
+	return true,
+		function(target: Player)
+			if target.Parent ~= Players then
+				return
 			end
+			refreshAttributes(target)
+			if hatchResultRemote then
+				local payload: Types.HatchResultPayload = { eggId = id, pets = results, pity = pityAfter }
+				hatchResultRemote:FireClient(target, payload)
+			end
+			hatchedEvent:Fire(target, id, results)
+			Deps.funnel(target, "FirstEgg")
 		end
-		refreshAttributes(player)
-		MultiplierService.refresh(player)
-		if hatchResultRemote then
-			local payload: Types.HatchResultPayload = { eggId = id, pets = results, pity = pityAfter }
-			hatchResultRemote:FireClient(player, payload)
-		end
-		hatchedEvent:Fire(player, id, results)
-		Deps.funnel(player, "FirstEgg")
-	end)
-	return true
 end
 
 -- Exposed for qa's GDD 8g firewall test (walks every grant fn with a fake profile).
