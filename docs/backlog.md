@@ -18,7 +18,7 @@ Acceptance criteria:
 - [ ] `wally search profilestore` confirms scope, name and version; `wally.toml` updated; `wally install` works
 - [ ] Method names (`New`, `StartSessionAsync`, `Reconcile`, `Save`, `EndSession`, session-end hook) checked against the installed source; each TODO(verify-api) in architecture.md 3c and 6 resolved or corrected
 - [ ] Result logged in docs/architecture.md and decisions.md
-Status: todo
+Status: todo (deferred, D-022: needs network/toolcheck; T-012 proceeds with TODO(verify-api))
 
 ### T-002 [integration] Verify AnalyticsService API (TODO(verify-api))   (S)  sprint: 1  owner: integration-programmer
 Depends on: owner `/toolcheck` pass
@@ -26,7 +26,7 @@ Acceptance criteria:
 - [ ] Method names and parameters for onboarding funnel, funnel step, economy, custom and progression events checked against create.roblox.com/docs; limits noted
 - [ ] architecture.md section 5 updated with the confirmed signatures (or "not available, fallback = custom events only")
 - [ ] `TelemetryService` signatures in architecture.md 1b still match
-Status: todo
+Status: todo (deferred, D-022: needs create.roblox.com docs; T-033 is S2)
 
 ### T-003 [integration] Update Contracts/Types.luau ProductKey to the rev 1 list of 23 products and sweep architecture   (M)  sprint: 1  owner: integration-programmer
 Depends on: none
@@ -35,14 +35,14 @@ Acceptance criteria:
 - [ ] Matching `GrantKind` list trimmed; `PlayerAttr.AutoMogEarlyOwned` and `skipRebirthsUsed` / `autoMogEarly` profile fields removed; `RebirthService.tryRebirth` loses its `skip` argument; `RequestPurchase` rules for Skip Rebirth / Skip World 2 removed
 - [ ] Remove D-017's default coin-egg gate from architecture 4d under option A (D-019 #1), pending the owner's choice; every "34 products" reference becomes 23; section 4d states the B-1 policy default and what changes under A or B; Starter Pack described without coins (30 min Hype Snack + Sparkle Pup + Rookie Shades)
 - [ ] `selene` and `stylua` clean; gameplay/systems tickets notified through the Contract requests table
-Status: todo
+Status: sprint 1, in progress
 
 ### T-004 [integration] Contracts/RateLimit.luau and NumberFormat.luau   (S)  sprint: 1  owner: integration-programmer
 Depends on: none
 Acceptance criteria:
 - [ ] RateLimit token bucket reads `Remotes.Definitions[name].rate/burst`, drops silently, and clears on PlayerRemoving
 - [ ] NumberFormat handles K/M/B/T/Qa and values up to 1e18 without errors; unit-checkable pure functions
-Status: todo
+Status: sprint 1, in progress
 
 ### T-005 [legal] Re-review GDD rev 1 changed sections and residual risk R-5   (S)  sprint: 1  owner: lawyer
 Depends on: none
@@ -59,7 +59,7 @@ Acceptance criteria:
 - [ ] All GDD 4.2-4.5 and 7 tables as data (12 tools, 7 pods, 13 bosses, 12 ranks, rebirth cost, caps `TAP_CAP_PER_SEC`, `M_CLAMP`, `INTERACT_RANGE`) with the architecture 1c function surface
 - [ ] Pure functions `rebirthCost`, `rebirthMult`, `coinRebirthMult`, `paidTierMult`, `petSlots`, `duelScore`; no number hard-coded elsewhere
 - [ ] `--!strict`, no Roblox services; values match the GDD tables exactly (spot-checked by qa in T-024)
-Status: todo
+Status: sprint 1, in progress
 
 ### T-007 [gameplay] ActivityService and MultiplierService   (M)  sprint: 1  owner: gameplay-programmer
 Depends on: T-006, T-012
@@ -67,7 +67,7 @@ Acceptance criteria:
 - [ ] `tryBegin/finish/get` with an exclusive Activity attribute; cleans up on PlayerRemoving
 - [ ] M pipeline from architecture 4a computed on events only, clamped 1..`M_CLAMP`, NaN gives 1; `Multiplier` and `CoinMultiplier` attributes written by this service only
 - [ ] Hype Snack and Coin Snack timers tick only while online and cap at 2 h
-Status: todo
+Status: sprint 1, in progress
 
 ### T-008 [gameplay] TapService   (M)  sprint: 1  owner: gameplay-programmer
 Depends on: T-004, T-006, T-007, T-012
@@ -75,7 +75,7 @@ Acceptance criteria:
 - [ ] `TapBatch` handler: integer 1..30, token bucket at 12/s minus AutoTapRate, silent drop on spam, DataLoaded check first
 - [ ] `addMp` is the only MP writer; updates mp and lifetimeMp, calls `RankService.onLifetimeMp`; `MpPerTap` attribute written
 - [ ] `setTapSink` supported for duels; client cannot send an amount (count only)
-Status: todo
+Status: sprint 1, in progress
 
 ### T-009 [gameplay] BossService (fight, coins, FirstWin)   (M)  sprint: 1  owner: gameplay-programmer
 Depends on: T-006, T-007, T-008, T-012, T-016
@@ -83,36 +83,36 @@ Acceptance criteria:
 - [ ] `RequestBossFight` validates id, world, distance, `Mp >= need`, `Activity`; 3 s fight + 1 s cycle; re-checks presence before awarding
 - [ ] Coins = BossCoins x `coinRebirthMult` x Coin Snack; no pet or paid term; `FirstWin`, `BestCoinsPerSec` written; `BossWon` signal; `PlayEffect BossWin` fired
 - [ ] Works with 12 players fighting at once without server lag
-Status: todo
+Status: sprint 1, in progress
 
 ### T-010 [gameplay] ShopService (BuyTool, BuyPod)   (S)  sprint: 1  owner: gameplay-programmer
 Depends on: T-006, T-012, T-016
 Acceptance criteria:
 - [ ] `BuyTool` only `ToolIndex + 1`, world unlocked, `trySpendCoins`; `BuyPod` 1..7 not owned, coins only (no Robux path)
 - [ ] `ToolIndex` and `PodsMask` attributes written; `getToolPower` used by TapService; signals fired
-Status: todo
+Status: sprint 1, in progress
 
 ### T-011 [gameplay] RankService   (S)  sprint: 1  owner: gameplay-programmer
 Depends on: T-006, T-012
 Acceptance criteria:
 - [ ] Rank computed from lifetime MP against the 12-rank table; `RankUp` signal; `Rank`, `LookId` attributes
 - [ ] Calls `CharacterService.setLook` and fires `PlayEffect RankUp` plus a server banner (rate-limited)
-Status: todo
+Status: sprint 1, in progress
 
 ### T-012 [systems] DataService (ProfileStore, Data API, attributes, leaderstats)   (M)  sprint: 1  owner: systems-programmer
-Depends on: T-001, T-003
+Depends on: T-003 (T-001 waived under D-022; ProfileStore calls carry TODO(verify-api))
 Acceptance criteria:
 - [ ] Profile schema v1 from architecture 3a (without Skip Rebirth fields); `Reconcile`; load failure kicks with a friendly message
 - [ ] API `getData/addCoins/trySpendCoins/update/waitForData/getSetting`; data attributes flushed at most 5 Hz; leaderstats Rank and Rebirths
 - [ ] Save on leave and shutdown; test that a rejoin keeps coins and MP; session lock verified with two Studio clients
-Status: todo
+Status: sprint 1, in progress
 
 ### T-013 [systems] ComplianceService (PolicyService gate)   (S)  sprint: 1  owner: systems-programmer
 Depends on: T-012
 Acceptance criteria:
 - [ ] `GetPolicyInfoForPlayerAsync` called on the server inside `pcall`, 3 tries with 2/4/8 s backoff, cached per player
 - [ ] Any failure gives `PaidRandomAllowed = false` (fail closed); attribute is read-only UI info; `paidRandomAllowed()` API
-Status: todo
+Status: sprint 1, in progress
 
 ### T-014 [systems] HUD, TapController and first-minute guidance   (M)  sprint: 1  owner: systems-programmer
 Depends on: T-004, T-008, T-009, T-012
@@ -120,7 +120,7 @@ Acceptance criteria:
 - [ ] MP, coins, rank, meter "100 MP to beat Sleepy Sid", floor arrow and "TAP to power up!" per GDD 9; collapsed leaderboard; shop buttons hidden until `FirstWin`
 - [ ] Tap capture for touch and mouse not over GUI, local cap 12/s, batch every 0.5 s, 44 px minimum touch targets, safe-area aware
 - [ ] Numbers use NumberFormat; works on a phone-size emulator
-Status: todo
+Status: sprint 1, in progress
 
 ### T-015 [systems] MOG button, Tool shop UI and notification toasts   (M)  sprint: 1  owner: systems-programmer
 Depends on: T-009, T-010, T-012, T-014
@@ -128,7 +128,7 @@ Acceptance criteria:
 - [ ] Grey MOG button "Need 600 MP (you: 412)" turning active at the threshold; fires `RequestBossFight`
 - [ ] Tool Stand UI (ProximityPrompt opens it, no purchase prompt) fires `BuyTool`; next tool only
 - [ ] `Notify` toasts (max 3) and server banners
-Status: todo
+Status: sprint 1, in progress
 
 ### T-016 [world] MapLayout and ZoneService core   (M)  sprint: 1  owner: world-programmer
 Depends on: T-003
@@ -136,14 +136,14 @@ Acceptance criteria:
 - [ ] MapLayout is the only code that knows tag and attribute names (architecture 1f); nil-safe for streaming
 - [ ] ZoneService: `getWorld`, `isNearBoss`, stage and stand lookup; `WorldId` attribute; spawn placement
 - [ ] Documented tag contract handed to builder in the same file header
-Status: todo
+Status: sprint 1, in progress
 
 ### T-017 [world] CharacterService basic (walk speed and movement locks)   (S)  sprint: 1  owner: world-programmer
 Depends on: T-016
 Acceptance criteria:
 - [ ] Single writer of WalkSpeed and JumpPower; reason-keyed `setMovementLocked`; `setSpeedMultiplier`
 - [ ] Survives respawn
-Status: todo
+Status: sprint 1, in progress
 
 ### T-018 [art] Glow Town hub: plaza, spawn, Sleepy Sid stage, Tool Stand, tags   (M)  sprint: 1  owner: builder
 Depends on: T-016
@@ -151,61 +151,61 @@ Acceptance criteria:
 - [ ] Spawn faces Sleepy Sid 15 studs away, with a small foam pit; Tool Stand as a ShopStand; all parts tagged per architecture 1f
 - [ ] Within part budgets (hub at most 6,000 parts); StreamingEnabled safe; every asset logged in docs/asset-briefs/asset-log.md
 - [ ] No body-shape jokes; Sid has pillow hair and a yawn
-Status: todo
+Status: todo (deferred, D-022: needs Studio/builder)
 
 ### T-019 [art] W1 boss models 1-4 (Sid, Benny, Sal, Captain Cardio) and stages   (M)  sprint: 1  owner: builder
 Depends on: T-018
 Acceptance criteria:
 - [ ] Models at most 150 parts, `ModelStreamingMode = Atomic`, `BossStage` tag with `BossId` and `WorldId`, 50 studs spaced along the stage row
 - [ ] Jokes are outfit or prop only (GDD 11); no fart or burp gags; asset-log updated
-Status: todo
+Status: todo (deferred, D-022: needs Studio/builder)
 
 ### T-020 [art] W1 boss models 5-7 (Duke of Drip, Glow Queen, Aura Titan) and stages   (M)  sprint: 1  owner: builder
 Depends on: T-019
 Acceptance criteria:
 - [ ] Same rules as T-019; Aura Titan reads clearly as the world boss
-Status: todo
+Status: todo (deferred, D-022: needs Studio/builder)
 
 ### T-021 [physics] EffectsConfig and tap sparkle / coin burst effects (pooled)   (M)  sprint: 1  owner: physics-programmer
 Depends on: T-003
 Acceptance criteria:
 - [ ] `EffectsConfig` (pool sizes, particle budgets, timings); `EffectsController` dispatches `PlayEffect`
 - [ ] Tap sparkles pooled (20), at most 300 particles alive, at most 2 ms per frame on low-end mobile
-Status: todo
+Status: sprint 1, in progress
 
 ### T-022 [physics] Boss pose-off animation and boss ragdoll (local clone)   (M)  sprint: 1  owner: physics-programmer
 Depends on: T-021, T-019
 Acceptance criteria:
 - [ ] 3 s pose-off, then the boss ragdolls into the foam pit on a client-side clone; the real model is untouched
 - [ ] Only players in the same world receive the effect; ragdoll clones are cleaned up (no leaks over 100 wins)
-Status: todo
+Status: todo (deferred, D-022: needs T-019 model and Studio check; moves to next sprint step)
 
 ### T-023 [physics] Spawn camera pan to Sleepy Sid   (S)  sprint: 1  owner: physics-programmer
 Depends on: T-021, T-018
 Acceptance criteria:
 - [ ] 2 s pan on first join, skippable by tap, never replays after FirstWin
-Status: todo
+Status: todo (deferred, D-022: needs T-018 hub in Studio)
 
 ### T-024 [qa] Test project, EconomyConfig validation and timing sim script   (M)  sprint: 1  owner: qa
 Depends on: T-006
 Acceptance criteria:
 - [ ] `test.project.json` and tests run; `EconomyConfig.validate()` and a tables-match-GDD check run in tests
 - [ ] Sim script reproduces GDD 4.7 (first win about 0:38, first rebirth 12-14 min) at 5 and 3 taps/s; report in docs/qa/
-Status: todo
+Status: sprint 1, in progress
 
 ### T-025 [qa] M1 exploit tests (tap flood, remote spam, bad arguments)   (S)  sprint: 1  owner: qa
 Depends on: T-008, T-009, T-010
 Acceptance criteria:
 - [ ] Fuzz tests on TapBatch, RequestBossFight, BuyTool (NaN, inf, negative, huge, wrong types, too-far player); none credit anything
 - [ ] Bugs filed in docs/qa/ with repro steps
-Status: todo
+Status: sprint 1, in progress
 
 ### T-026 [integration] Bootstrap wiring and sprint 1 merge   (S)  sprint: 1  owner: integration-programmer
 Depends on: T-003, T-004, T-007, T-008, T-009, T-012, T-014, T-016, T-021
 Acceptance criteria:
 - [ ] Main.server and Main.client load all modules in the architecture order; `Init` never yields
 - [ ] Branches merged to `main` one ticket per commit; `main` plays in Studio from spawn to first boss win and survives rejoin
-Status: todo
+Status: sprint 1, in progress (last step; code-only: `rojo build` and lint; Studio play-through deferred to Mac /toolcheck)
 
 ---
 

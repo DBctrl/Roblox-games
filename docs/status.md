@@ -3,7 +3,7 @@ Toolchain: NOT VERIFIED (run ./scripts/doctor.sh, then /toolcheck on the Mac)
 # Status
 _Owned by project-manager. One screen. Updated 2026-10-31._
 
-**Game:** "Aura Up!" (working title), mog clicker | **Stage:** GDD approved, sprint 1 waiting on toolchain | **Milestone:** M1 not started | **Sprint:** 0 of 4 | **Plan:** 87 tickets, about 4 weeks (3 build + 1 buffer), then the 16+ trial
+**Game:** "Aura Up!" (working title), mog clicker | **Stage:** GDD approved, sprint 1 running code-only (D-022) | **Milestone:** M1 in progress | **Sprint:** 1 of 4 (step 1) | **Plan:** 87 tickets, about 4 weeks (3 build + 1 buffer), then the 16+ trial
 
 ## Sprint
 S1 = M1 core loop (26 tickets) | S2 = M2 progression + saving (22) | S3 = M3 duels, W2, monetization, polish (24) | S4 = M4 buffer, QA, launch kit (15). Details: docs/backlog.md.
@@ -14,10 +14,13 @@ S1 = M1 core loop (26 tickets) | S2 = M2 progression + saving (22) | S3 = M3 due
 - Owner approved GDD rev 1 and B-1 option A (D-021): Robux never buys coins, 23 products, coin eggs open to all
 
 ## In progress
-- Nothing. Waiting on owner toolchain setup.
+- Sprint 1 step 1 (code-only, D-022), 18 tickets:
+  - integration: T-003, T-004 first (contracts), T-026 last (wiring and merge)
+  - gameplay: T-006..T-011 | world: T-016, T-017 | systems: T-012..T-015 | physics: T-021 | qa: T-024, T-025
+- Deferred (Studio/network): T-001, T-002, T-018..T-020 (builder), T-022, T-023
 
 ## Blocked (who can unblock)
-- All S1 build tickets: toolchain verification (owner)
+- Studio-dependent S1 tickets (art, Studio play-through, API verification T-001/T-002): toolchain verification on the Mac (owner). Code tickets proceed under D-022
 - Monetization tickets T-053, T-056, T-057, T-058, T-069, T-071, T-073, T-075, T-081: owner price approval (gate 5), then the owner creates the 23 developer products. Build may use GDD placeholder prices; nothing goes live
 - T-053 ladder-receipt fix (D-019 #3, Hype Snack fallback) waits for the price review
 - T-076 Group Crew Cap: owner decision (GDD Q8), group id, Community Standards read (T-084)
