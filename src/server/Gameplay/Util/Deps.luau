@@ -53,7 +53,7 @@ export type CharacterApi = {
 }
 
 -- Grant fn contract (architecture 1b, 3c, 4e): mutates only `data`, synchronously, inside MonetizationService's
--- one DataService.update that also records the receipt id; returns false = cannot grant now (NotYetProcessed).
+-- one DataService.update that also records the receipt id; returns false = cannot grant now (NotProcessedYet).
 export type GrantFn = (player: Player, key: Types.ProductKey, data: ProfileData) -> boolean
 
 export type MonetizationApi = {

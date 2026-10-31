@@ -501,7 +501,7 @@ end
 
 -- Starter Pack: Sparkle Pup + 30 min Hype Snack + Rookie Shades + the once flag. No coins, no pod, no egg.
 -- The once rule is a prompt gate (MonetizationService); a second receipt that still arrives gets the same contents
--- again, so Robux is never taken for nothing (D-056).
+-- again, so Robux is never taken for nothing (D-063).
 local function grantStarterPack(player: Player, key: Types.ProductKey, data: ProfileData): boolean
 	local entry = ProductCatalog.get(key)
 	local petId = entry and entry.petId
@@ -605,9 +605,22 @@ local function grantRobuxEgg(player: Player, key: Types.ProductKey, data: Profil
 		)
 	end
 	local pityAfter = if newPity ~= nil then newPity else Guard.clampFinite(data.pity[id], 0, 1e6, 0)
+	-- QA-14: `data` is MonetizationService's copy, and this fn returns before anyone knows whether the copy is
+	-- committed. The deferred reveal runs after that update and only goes out if every granted pet is in the LIVE
+	-- profile, so a refused or released receipt sends no HatchResult and fires no Hatched (the retry reveals once).
 	task.defer(function()
 		if player.Parent ~= Players then
 			return
+		end
+		local live = Deps.data().getData(player)
+		if live == nil then
+			return
+		end
+		for _, pet in results do
+			local row = live.pets.inventory[pet.uid]
+			if row == nil or row.id ~= pet.petId then
+				return -- not committed: say nothing to the client and count no hatch
+			end
 		end
 		refreshAttributes(player)
 		MultiplierService.refresh(player)
@@ -622,11 +635,11 @@ local function grantRobuxEgg(player: Player, key: Types.ProductKey, data: Profil
 end
 
 -- Exposed for qa's GDD 8g firewall test (walks every grant fn with a fake profile).
-PetService.grants = {
+PetService.grants = table.freeze({
 	FixedPet = grantFixedPet,
 	StarterPack = grantStarterPack,
 	RobuxEgg = grantRobuxEgg,
-}
+})
 
 -- Lifecycle -------------------------------------------------------------------------------------------------
 

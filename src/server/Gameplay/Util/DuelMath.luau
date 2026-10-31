@@ -68,20 +68,20 @@ function DuelMath.decide(scoreA: number, scoreB: number): "A" | "B" | "Draw"
 end
 
 -- Entries of `log` still inside the 1 h reward window (bad rows dropped). Never mutates `log`.
+-- QA-13: an entry dated after `nowUnix` (written by a server whose clock runs ahead) is kept and clamped to
+-- `nowUnix`, so it still counts against both caps here and expires one window from now. Dropping it would let a
+-- server hop to a slower clock earn an extra rewarded win.
 function DuelMath.pruneRewardLog(log: { RewardEntry }, nowUnix: number): { RewardEntry }
 	local kept: { RewardEntry } = {}
 	if typeof(log) ~= "table" then
 		return kept
 	end
 	for _, row in log do
-		if
-			typeof(row) == "table"
-			and isFinite(row.t)
-			and isFinite(row.opp)
-			and nowUnix - row.t < EconomyConfig.DUEL_REWARD_WINDOW_SEC
-			and row.t <= nowUnix
-		then
-			table.insert(kept, { t = row.t, opp = row.opp })
+		if typeof(row) == "table" and isFinite(row.t) and isFinite(row.opp) then
+			local t = math.min(row.t, nowUnix)
+			if nowUnix - t < EconomyConfig.DUEL_REWARD_WINDOW_SEC then
+				table.insert(kept, { t = t, opp = row.opp })
+			end
 		end
 	end
 	return kept
