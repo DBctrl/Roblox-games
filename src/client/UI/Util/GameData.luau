@@ -317,11 +317,36 @@ function GameData.egg(eggId: string): Egg?
 	}
 end
 
--- Forced pity roll weights (Legendary, Mythic) out of ODDS_TOTAL: 9000 / 1000 (GDD 5, architecture 4b).
-function GameData.pityWeights(): (number, number)
+-- Rows from an EconomyConfig odds helper (CR-G5, D-069) for egg `eggId`, copied; nil if it is missing or fails.
+local function eggOdds(fnName: string, eggId: string, ...: any): { EggPet }?
 	ensure()
-	return num(economy and economy.PITY_LEGENDARY_WEIGHT, 9000),
-		num(economy and economy.PITY_MYTHIC_WEIGHT, 1000)
+	local source = economy and economy.EGGS
+	local entry = if type(source) == "table" then source[eggId] else nil
+	local fn = economy and economy[fnName]
+	if type(entry) ~= "table" or type(fn) ~= "function" then
+		return nil
+	end
+	local ok, rows = pcall(fn, entry, ...)
+	if not ok or type(rows) ~= "table" then
+		return nil
+	end
+	local out: { EggPet } = {}
+	for _, row in ipairs(rows) do
+		if type(row) == "table" and type(row.petId) == "string" and type(row.weight) == "number" then
+			table.insert(out, { petId = row.petId, weight = row.weight })
+		end
+	end
+	return out
+end
+
+-- EconomyConfig.pityOdds: the forced pity roll's rows (Legendary and Mythic pets only), as PetService rolls them.
+function GameData.pityOdds(eggId: string): { EggPet }?
+	return eggOdds("pityOdds", eggId)
+end
+
+-- EconomyConfig.nextHatchOdds: the rows of the next hatch at pity counter `pity` (base rows, or the pity rows).
+function GameData.nextHatchOdds(eggId: string, pity: number): { EggPet }?
+	return eggOdds("nextHatchOdds", eggId, pity)
 end
 
 -- Pet `petId` from EconomyConfig.PETS; nil if unknown.
