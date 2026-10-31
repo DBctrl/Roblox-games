@@ -191,7 +191,7 @@ No other EconomyConfig value changes. Tools, pods, bosses, rebirth cost (`REBIRT
 | | Gel Penguin | Uncommon | +0.35 | 35% |
 | | Disco Duck | Rare | +0.60 | 15% |
 | | Sparkle Owl | Epic | +1.20 | 4.5% |
-| | Golden Glow Cat | Legendary | +3.00 | 0.5% |
+| | Golden Glow Cat | Legendary | +3.20 (rev 3, D-060; was +3.00) | 0.5% |
 | **Star Egg** (W1, Robux, PROPOSED 25 R$ / 3 for 69 R$) | Starlight Corgi | Rare | +1.00 | 60% |
 | | Aura Lion | Epic | +1.80 | 30% |
 | | Halo Dragon | Legendary | +3.50 | 9% |
@@ -213,7 +213,7 @@ No other EconomyConfig value changes. Tools, pods, bosses, rebirth cost (`REBIRT
 Each egg sums to 100%.
 
 **Free-player rule (keeps Robux eggs from making free players irrelevant):**
-1. Each world's best free pet beats that world's most common Robux pet (Golden Glow Cat +3.0 > Starlight Corgi +1.0; Crowned Griffin +8.0 > Nebula Fox +3.0). **(rev 3)** With the Galaxy Egg in World 1, Golden Glow Cat (+3.00) only **ties** Nebula Fox (+3.00) there. See 5.1 for the check and the optional fix (needs owner approval).
+1. Each world's best free pet beats that world's most common Robux pet (Golden Glow Cat +3.2 > Starlight Corgi +1.0; Crowned Griffin +8.0 > Nebula Fox +3.0). **(rev 3)** With the Galaxy Egg in World 1, Golden Glow Cat (**+3.20**, D-060) beats Nebula Fox (+3.00) there too. See 5.1 for the check.
 2. PetMult is capped at x25. A typical free team at R10 is x8-12, so paid pets are worth at most ~2-3x free pets, never 10x.
 3. Boss thresholds and rebirth costs are tuned to the **zero-Robux** curve (4.7). Paying only goes faster.
 4. Pets, the paid tier and VIP have **zero effect in duels** (section 6).
@@ -224,11 +224,11 @@ Each egg sums to 100%.
 **Free-player check in World 1 (World 2 is not reachable in the lean v1):**
 | Check | Before rev 3 (Star Egg only in W1) | Rev 3 (Star + Galaxy in W1) | Verdict |
 |---|---|---|---|
-| Free W1 pet ceiling (Golden Glow Cat +3.00, 0.5% in the 10,000-coin Shiny Egg) | x10 (3 slots), x13 (R3, 4 slots), x16 (R8, 5 slots); a typical free team (Sparkle Owl, Disco Duck, Gel Penguin) is about x3-5 by R3 | same | unchanged |
+| Free W1 pet ceiling (Golden Glow Cat, 0.5% in the 10,000-coin Shiny Egg) | +3.00: x10 (3 slots), x13 (R3, 4 slots), x16 (R8, 5 slots); a typical free team (Sparkle Owl, Disco Duck, Gel Penguin) is about x3-5 by R3 | +3.20 (D-060): x10.6 / x13.8 / x17; typical free team the same | slightly higher |
 | Highest PetMult a payer can reach in W1 | x25 cap (already reachable: 3 Cosmic Unicorns = 1 + 24) | x25 cap | **unchanged**: the cap binds, and the M clamp stays 10,000 |
 | Rough cost to reach the x25 cap (3 slots; about 6.5 hatches per Legendary+ with pity, 10% of them Mythic) | about 4,500 R$ (3 Unicorns, about 65 Star hatches each at 23 R$ in 3-packs) | about 560-860 R$ (2-3 Supernova Dragons = 13-20 Galaxy hatches at 43 R$) | cheaper, but still above the full ladder (4+8+19+39+79 = 149 R$ for x32), which stays the bigger lever |
 | One Galaxy 3-pack (129 R$), typical roll | n.a. | 2 Nebula Fox + 1 Comet Wolf = x12 | about 3x a typical free R3 team, inside the 2-3x target only at the low end |
-| Most common Robux pet vs best free pet (rule 1) | Starlight Corgi +1.00 < Golden Glow Cat +3.00 | Nebula Fox +3.00 = Golden Glow Cat +3.00 | **tie**: optional fix below |
+| Most common Robux pet vs best free pet (rule 1) | Starlight Corgi +1.00 < Golden Glow Cat +3.00 | Nebula Fox +3.00 < Golden Glow Cat +3.20 (D-060) | **holds** (fix below applied) |
 | W1 coin income | fixed per boss; ceiling Aura Titan 1,000 coins/s x (1 + 0.1R) | same | **unchanged**: pets never touch coins (4.1) |
 | Duels | pets ignored | pets ignored | unchanged |
 
@@ -238,7 +238,7 @@ Each egg sums to 100%.
 3. **The Rebirths board and the Duel board stay fair.** Rebirths are coin-bound (same coin ceiling), and duels ignore pets. Only the Lifetime MP board favours payers, which the ladder already did.
 4. **Update 1 restores rule 1 for World 2 as designed:** Neon and Runway free pets (Crowned Griffin +8.00) beat Nebula Fox again there.
 
-**Optional fix for the rule-1 tie (NOT applied; needs owner approval, gate 5):** raise the **free** Golden Glow Cat from +3.00 to **+3.20**. It changes no odds, no price and no paid pet. Free W1 ceiling becomes x10.6 / x13.8 / x17. Shipping today without it is acceptable: a tie is not a loss, and points 1-3 above hold either way. See section 15, Q11.
+**Fix for the rule-1 tie (APPLIED, approved by owner in D-060, gate 5):** the **free** Golden Glow Cat goes from +3.00 to **+3.20**. It changes no odds, no price and no paid pet. Free W1 ceiling becomes x10.6 / x13.8 / x17. See section 15, Q11 (resolved).
 
 ### 5.2 Rev 3 changes (for gameplay-programmer, world-programmer, builder, qa)
 | # | Owner | File / place | Field | Rev 2 | Rev 3 | Apply |
@@ -247,7 +247,7 @@ Each egg sums to 100%.
 | 2 | gameplay-programmer | same | comment above `NebulaFox` ("Galaxy Egg (W2, Robux; ...)") and the header line 6-7 | W2 | W1 (rev 3, D-057) | now (comment only) |
 | 3 | gameplay-programmer | same | `EGG_IDS` order | Basic, Shiny, Star, Galaxy | unchanged (Galaxy already lists right after Star) | no change |
 | 4 | gameplay-programmer | same | `GalaxyEgg.pets` weights, `pityAt`, `restrictedGrant`, Galaxy pet `bonus` values | 6000/3000/900/100, 10, NebulaFox, 3/5/9/20 | **unchanged** | no change |
-| 5 | gameplay-programmer | same | `PETS.GoldenGlowCat.bonus` | 3.00 | 3.20 | **only after owner approval (Q11, gate 5)** |
+| 5 | gameplay-programmer | same | `PETS.GoldenGlowCat.bonus` | 3.00 | **3.20** | **now (D-060 approved, Q11)**; qa regenerates `GddTables.luau` with `--luau-fixture` |
 | 6 | world-programmer | `src/shared/World/MapLayout.luau` | `WORLDS[1]` egg stands | Basic (-30,0,-15), Shiny (-50,0,-15), Star (-70,0,-15) | add **`GalaxyEgg = Vector3.new(-90, 0, -15)`** (20 studs past the Star stand, same row as the others) | now |
 | 7 | world-programmer | same | `WORLDS[2]` egg stands | Neon, Runway, Galaxy | remove `GalaxyEgg` (it lives in W1) | now |
 | 8 | world-programmer | same | `W1_EGG_IDS` and the builder header (lines 30-32) | `{ "BasicEgg", "ShinyEgg" }` | `{ "BasicEgg", "ShinyEgg", "StarEgg", "GalaxyEgg" }`; header lists all 4 W1 stands | now |
@@ -255,7 +255,7 @@ Each egg sums to 100%.
 | 10 | integration-programmer | `docs/architecture.md` (EGGS comment, about line 288) | GalaxyEgg world | "GalaxyEgg (Robux, W2)" | "GalaxyEgg (Robux, W1, rev 3)" | now (doc only) |
 | 11 | qa | `tests/shared/Fixtures/GddTables.luau` | Galaxy Egg world | 2 | 1 (regenerate with `--luau-fixture`) | now; plus a check that `isNearEggStand` accepts the Galaxy stand in W1 and the odds UI opens from it |
 
-No other EconomyConfig, ProductCatalog or MapLayout value changes. Server rules are untouched: Robux eggs still sell only through `RequestPurchase`, and `isNearEggStand` already requires egg world == player world, so row 1 makes the W1 stand valid.
+No other EconomyConfig, ProductCatalog or MapLayout value changes (row 5 is the only pet-bonus change, D-060). Server rules are untouched: Robux eggs still sell only through `RequestPurchase`, and `isNearEggStand` already requires egg world == player world, so row 1 makes the W1 stand valid.
 
 ## 6. PvP mog battles (opt-in duels)
 - **Start:** tap a player -> "Challenge to a Mog-Off". The target sees Accept/Decline (auto-decline after 10 s). Settings has "Duel requests: On / Off" (default **On only after the tutorial quest chain ends**, ~4 min; before that the player cannot send or receive challenges). Both players are teleported to one of 2 Mog Rings in each world's hub.
@@ -284,7 +284,7 @@ Every rank-up plays a 3 s moment: spotlight, confetti, camera orbit, the new loo
 | 12 | Supreme Mogger | 10,000,000,000 | rainbow aura + crown |
 The first win also grants a free "Starter Fit" piece so the very first payoff changes the avatar.
 
-## 8. Monetization (rev 1) (developer products only; every price PROPOSED, needs owner approval)
+## 8. Monetization (rev 1) (developer products only; prices APPROVED by owner in D-038 except the 4 rows marked "not in D-038", which need a new approval before they go on sale; Galaxy Egg in World 1 per D-057)
 **Headline (rev 1): Robux never buys coins.** 23 products: the "x2 Mog Points" ladder, MP boosts, fixed pets, cosmetics, VIP, a coin-free Starter Pack, 2 Robux eggs and tips. This is legal option A for BLOCKER B-1, as a PROPOSAL. Option B is in section 15.
 
 **Rules:**
@@ -298,20 +298,20 @@ The first win also grants a free "Starter Fit" piece so the very first payoff ch
 - (h) **(rev 1) Timed boosts (legal 2.14):** the HUD shows time left and the 2 h cap. Purchase is blocked once the cap would be exceeded, so no paid time is wasted. Boost time runs **only while the player is in game** (offline time doesn't use it up). This is stated in the listing.
 - (i) **(rev 1) Wording (legal 2.16, 2.17):** cosmetics are called "Exclusive" (not "Limited"), with no timers and no "rare/resale" claims. Every tip listing says: "Thank-you banner + donor name-tag colour. No other in-game benefit."
 
-| Category | Product | Price (R$) PROPOSED, needs owner approval | Effect |
+| Category | Product | Price (R$) | Effect |
 |---|---|---|---|
-| Multiplier ladder (permanent, next tier only) | x2 / x4 / x8 / x16 / x32 Mog Points | 4 / 8 / 19 / 39 / 79 | PaidTier in 4.1, MP only, PvE only. "Does not stack: the highest tier you own applies." |
-| Cheap entry (timed) | Hype Snack | 2 | x2 MP for 10 min (stacks to 2 h, in-game time only) |
-| | Speed Sneakers | 4 | +50% walk speed for 30 min (in-game time only) |
-| Automation | Auto Clicker | 39 | 6 auto taps/s from the start (MP only; 12/s server cap) |
-| **Fixed pets (rev 1, no randomness)** | Ring Light Retriever (one copy) | 29 | Fixed pet, +1.00 MP bonus. Below Golden Glow Cat (+3.0), the best free W1 pet |
-| | Neon Pup (one copy) | 59 | Fixed pet, +3.00 MP bonus. Below Crowned Griffin (+8.0), the best free W2 pet |
-| Exclusive cosmetic per world | Golden Glow Fit (W1) / Neon Icon Fit (W2) | 249 / 349 | outfit + aura, cosmetic only, no stats |
-| VIP (permanent) (rev 1) | VIP | 99 | x1.25 MP, +1 pet slot, gold name tag, **VIP Sparkle Aura cosmetic, +10 min Hype Snack on each daily-reward claim**. VIP never changes coin rewards or egg rewards |
-| Starter pack (once) (rev 1) | Starter Pack | 9 | **30 min Hype Snack + Sparkle Pup fixed pet (+0.30) + Rookie Shades cosmetic.** No coins, no pod, no egg |
-| Robux eggs | Star Egg 1 / 3 | 25 / 69 | table 5, pity 10 (saved), restricted fallback: Starlight Corgi |
-| | Galaxy Egg 1 / 3 | 49 / 129 | table 5, pity 10 (saved), restricted fallback: Nebula Fox |
-| Donations (D-002) | Tip 5 / 25 / 100 / 500 / 1,000 | 5 / 25 / 100 / 500 / 1,000 | thank-you banner + donor name-tag colour, nothing else; Top Donors board shows names and rank only, no amounts, with opt-out (D-008) |
+| Multiplier ladder (permanent, next tier only) | x2 / x4 / x8 / x16 / x32 Mog Points | 4 / 8 / 19 / 39 / 79, APPROVED (D-038) | PaidTier in 4.1, MP only, PvE only. "Does not stack: the highest tier you own applies." |
+| Cheap entry (timed) | Hype Snack | 2, APPROVED (D-038) | x2 MP for 10 min (stacks to 2 h, in-game time only) |
+| | Speed Sneakers | 4, PROPOSED, not in D-038, needs owner approval | +50% walk speed for 30 min (in-game time only) |
+| Automation | Auto Clicker | 39, APPROVED (D-038) | 6 auto taps/s from the start (MP only; 12/s server cap) |
+| **Fixed pets (rev 1, no randomness)** | Ring Light Retriever (one copy) | 29, APPROVED (D-038) | Fixed pet, +1.00 MP bonus. Below Golden Glow Cat (+3.2, D-060), the best free W1 pet |
+| | Neon Pup (one copy) | 59, PROPOSED, not in D-038, needs owner approval | Fixed pet, +3.00 MP bonus. Below Crowned Griffin (+8.0), the best free W2 pet |
+| Exclusive cosmetic per world | Golden Glow Fit (W1) / Neon Icon Fit (W2) | 249 APPROVED (D-038) / 349 PROPOSED, not in D-038, needs owner approval | outfit + aura, cosmetic only, no stats |
+| VIP (permanent) (rev 1) | VIP | 99, APPROVED (D-038) | x1.25 MP, +1 pet slot, gold name tag, **VIP Sparkle Aura cosmetic, +10 min Hype Snack on each daily-reward claim**. VIP never changes coin rewards or egg rewards |
+| Starter pack (once) (rev 1) | Starter Pack | 9, APPROVED (D-038) | **30 min Hype Snack + Sparkle Pup fixed pet (+0.30) + Rookie Shades cosmetic.** No coins, no pod, no egg |
+| Robux eggs (both in World 1, D-057) | Star Egg 1 / 3 (W1) | 25 / 69, APPROVED (D-038) | table 5, pity 10 (saved), restricted fallback: Starlight Corgi |
+| | Galaxy Egg 1 / 3 (**W1**, stand next to Star, D-057) | 49 / 129, APPROVED (D-038, unchanged by D-057) | table 5, pity 10 (saved), restricted fallback: Nebula Fox |
+| Donations (D-002) | Tip 5 / 25 / 100 / 500 / 1,000 | 5 / 25 / 100 / 500 / 1,000, PROPOSED, not in D-038, needs owner approval | thank-you banner + donor name-tag colour, nothing else; Top Donors board shows names and rank only, no amounts, with opt-out (D-008) |
 
 Total: **23 products** (v1 had 34).
 
@@ -400,4 +400,4 @@ Rev 1 rules for every update: event coin boosts are free and server-wide, and ne
 8. **Group reward:** the cosmetic Crew Cap (allowed as RISK, subject to your pre-launch read of Community Standards), or no reward?
 9. **Kids/Select:** pay the refundable fee (Robux, gate 3) or rely on a Plus/Premium membership held for 2+ months? When can you complete the creator age check and 2SV?
 10. **Rank names:** keep "Star Mogger"/"Supreme Mogger", or switch now to "Star Icon"/"Supreme Icon", which the lawyer called safer for Select review?
-11. **(rev 3) Golden Glow Cat +3.00 -> +3.20? Needs owner approval (gate 5).** With the Galaxy Egg in World 1 (D-057), the best free W1 pet only ties the most common Galaxy pet (Nebula Fox +3.00). Raising the free Golden Glow Cat to +3.20 restores "best free pet beats the most common Robux pet" with no change to odds, prices or any paid pet. Default if you say nothing: keep +3.00 (safe to ship; see 5.1). Galaxy odds, pity, fallback and prices are unchanged in rev 3.
+11. ~~(rev 3) Golden Glow Cat +3.00 -> +3.20?~~ **RESOLVED (D-060, approved by owner, gate 5): +3.20.** The best free W1 pet now beats the most common Galaxy pet (Nebula Fox +3.00) again, with no change to odds, prices or any paid pet (5.1, 5.2 row 5).
