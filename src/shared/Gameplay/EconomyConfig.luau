@@ -213,7 +213,7 @@ local pets: { [string]: Pet } = {
 	AuraLion = { name = "Aura Lion", rarity = "Epic", bonus = 1.80 },
 	HaloDragon = { name = "Halo Dragon", rarity = "Legendary", bonus = 3.50 },
 	CosmicUnicorn = { name = "Cosmic Unicorn", rarity = "Mythic", bonus = 8.00 },
-	-- Galaxy Egg (W2, Robux; rolled in T-073)
+	-- Galaxy Egg (W1 since D-057, Robux; rolled in T-073)
 	NebulaFox = { name = "Nebula Fox", rarity = "Rare", bonus = 3.00 },
 	CometWolf = { name = "Comet Wolf", rarity = "Epic", bonus = 5.00 },
 	SupernovaDragon = { name = "Supernova Dragon", rarity = "Legendary", bonus = 9.00 },
@@ -269,7 +269,7 @@ local eggs: { [string]: Egg } = {
 	},
 	GalaxyEgg = {
 		name = "Galaxy Egg",
-		world = 2,
+		world = 1, -- GDD rev 3 5.2 (D-057): moved from World 2; odds, pity, prices and fallback unchanged
 		currency = "Robux",
 		price = 0,
 		pets = {
