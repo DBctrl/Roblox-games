@@ -80,7 +80,7 @@ named role. Line numbers are for `main` at `dde2064` (build 1)._
 - **Expected:** `RANKS[2].lifetimeMp = 1800` (GDD 4.8, D-033).
 - **Actual:** 2,500, so the game keeps the rev 1 timing (Rank 2 at 5:31 for a 3 taps/s boss-only player). The
   Studio spec "RANKS match GDD 7" fails until it changes.
-- **Fix hint:** change the one value; `EconomyConfig.validate()` still passes (ranks stay ascending).
+- **Fix hint:** change the one value; `EconomyConfig.validate()` still passes (ranks stay ascending). Planned as T-088 (D-035).
 
 ### QA-F6 [gdd] 3 taps/s first-rebirth band starts 2 s after the GDD's own time   S3
 - **Found by:** qa (D-033 rerun, `python3 -I tests/sim/timing_sim.py`).
