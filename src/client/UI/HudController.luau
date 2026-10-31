@@ -2,8 +2,11 @@
 -- HudController: MP / coins / rank, the boss meter, first-minute guidance, leaderboard toggle and shop buttons.
 -- Owned by systems-programmer. Contract: architecture 1d #25, GDD 9 (first 5 minutes).
 --
--- * Reads only server-written attributes and shared config (GameData); sends nothing in this file except through
---   the MOG button (T-015). Every number goes through NumberFormat.
+-- * Reads only server-written attributes and shared config (GameData). The only remote it fires is
+--   RequestBossFight from the MOG button (T-015); BossService re-checks id, world, distance, MP and activity.
+--   Every number goes through NumberFormat.
+-- * MOG button (GDD 4.4): shown when a boss stage of the current world is within INTERACT_RANGE. Grey
+--   "Need 600 MP (you: 412)" below the threshold, pulsing "MOG!" at or above it, "MOGGING..." during a fight.
 -- * First minute (GDD 9): pulsing "TAP to power up!" with a tap ring until the first tap; meter "100 MP to beat
 --   Sleepy Sid"; when full, "GO MOG HIM!"; a light beam from the player to Sid's stage until the first win.
 -- * Shop buttons are hidden until FirstWin (GDD 8a). The Robux shop button arrives with T-057; this HUD has no
@@ -18,6 +21,7 @@ local TweenService = game:GetService("TweenService")
 
 local Contracts = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Contracts")
 local NumberFormat = require(Contracts:WaitForChild("NumberFormat"))
+local Remotes = require(Contracts:WaitForChild("Remotes"))
 local Types = require(Contracts:WaitForChild("Types"))
 
 local GameData = require(script.Parent.Util.GameData)
@@ -29,6 +33,8 @@ local Theme = Ui.Theme
 
 local ARROW_HIDE_DISTANCE = 12 -- studs: close enough to the stage, the arrow goes away
 local ARROW_CHECK_SEC = 0.5
+local MOG_CHECK_SEC = 0.25
+local MOG_DEBOUNCE_SEC = 1
 
 local HudController = {}
 
@@ -46,11 +52,16 @@ type Elements = {
 	tapHint: Frame,
 	shopButtons: Frame,
 	playersButton: TextButton,
+	mogButton: TextButton,
+	mogScale: UIScale,
+	mogPulse: Tween,
 }
 
 local ui: Elements? = nil
 local hasTapped = false
 local playerListOpen = false
+local mogBoss: GameData.Boss? = nil -- boss whose stage is in range, nil = button hidden
+local lastMogAt = 0
 
 -- Arrow (client-only Beam; no per-frame work)
 local stageAttachment: Attachment? = nil
@@ -179,12 +190,13 @@ local function build(): Elements
 	})
 	Ui.textLimit(20).Parent = playersButton
 
-	-- Bottom-right: shop buttons, hidden until FirstWin (GDD 8a, 9: small, not blinking).
+	-- Right side, above the mobile jump button: shop buttons, hidden until FirstWin (GDD 8a, 9: small, not
+	-- blinking).
 	local shopButtons = Ui.new("Frame", {
 		Name = "ShopButtons",
 		BackgroundTransparency = 1,
-		AnchorPoint = Vector2.new(1, 1),
-		Position = UDim2.new(1, -8, 1, -8),
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -8, 0.58, 0),
 		Size = UDim2.fromScale(0.14, 0.09),
 		Visible = false,
 		Parent = screen,
@@ -208,6 +220,23 @@ local function build(): Elements
 		UiEvents.fireOpenPanel("Tools")
 	end)
 
+	-- Bottom-centre: the giant MOG button (hidden until a boss stage is in range).
+	local mogButton = Ui.button({
+		Name = "MogButton",
+		Text = "MOG!",
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -10),
+		Size = UDim2.fromScale(0.34, 0.12),
+		BackgroundColor3 = Theme.grey,
+		Visible = false,
+		Parent = screen,
+	})
+	Ui.sizeLimit(180, 56, 420, 110).Parent = mogButton
+	Ui.textLimit(34).Parent = mogButton
+	local mogScale = Ui.new("UIScale", { Parent = mogButton })
+	local mogPulse = pulse(mogScale, { Scale = 1.08 }, 0.45)
+	mogPulse:Cancel() -- plays only while the button is active
+
 	return {
 		screen = screen,
 		mpLabel = mpLabel,
@@ -222,6 +251,9 @@ local function build(): Elements
 		tapHint = tapHint,
 		shopButtons = shopButtons,
 		playersButton = playersButton,
+		mogButton = mogButton,
+		mogScale = mogScale,
+		mogPulse = mogPulse,
 	}
 end
 
@@ -286,6 +318,82 @@ local function refresh()
 
 	elements.tapHint.Visible = not hasTapped and not firstWin
 	elements.shopButtons.Visible = firstWin
+end
+
+-- MOG button ------------------------------------------------------------------------------------------
+
+-- The boss of the current world whose stage is nearest to the character, if within INTERACT_RANGE.
+local function bossInRange(): GameData.Boss?
+	local character = Players.LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if root == nil or not root:IsA("BasePart") then
+		return nil
+	end
+	local range = GameData.interactRange()
+	local best: GameData.Boss? = nil
+	local bestDistance = math.huge
+	for _, boss in GameData.bossesInWorld(Ui.numAttr(Attr.WorldId, 1)) do
+		local stage = GameData.bossStage(boss.id)
+		if stage then
+			local distance = (stage.Position - root.Position).Magnitude
+			if distance <= range and distance < bestDistance then
+				best, bestDistance = boss, distance
+			end
+		end
+	end
+	return best
+end
+
+local function refreshMog()
+	local elements = ui
+	if elements == nil then
+		return
+	end
+	local button = elements.mogButton
+	local boss = mogBoss
+	local activity = Players.LocalPlayer:GetAttribute(Attr.Activity)
+	if boss == nil or not Ui.boolAttr(Attr.DataLoaded) or activity == "Duel" then
+		button.Visible = false
+		return
+	end
+	button.Visible = true
+	local mp = Ui.numAttr(Attr.Mp, 0)
+	if activity == "BossFight" then
+		button.Text = "MOGGING..."
+		button.BackgroundColor3 = Theme.accent
+		button.AutoButtonColor = false
+		elements.mogPulse:Cancel()
+		elements.mogScale.Scale = 1
+	elseif mp >= boss.need then
+		button.Text = `MOG {boss.name}!`
+		button.BackgroundColor3 = Theme.good
+		button.AutoButtonColor = true
+		if elements.mogPulse.PlaybackState ~= Enum.PlaybackState.Playing then
+			elements.mogPulse:Play()
+		end
+	else
+		button.Text = `Need {NumberFormat.abbreviate(boss.need)} MP (you: {NumberFormat.abbreviate(mp)})`
+		button.BackgroundColor3 = Theme.grey
+		button.AutoButtonColor = false
+		elements.mogPulse:Cancel()
+		elements.mogScale.Scale = 1
+	end
+end
+
+local function onMogPressed(requestBossFight: RemoteEvent)
+	local boss = mogBoss
+	if boss == nil or Ui.numAttr(Attr.Mp, 0) < boss.need then
+		return
+	end
+	if Players.LocalPlayer:GetAttribute(Attr.Activity) == "BossFight" then
+		return
+	end
+	local now = os.clock()
+	if now - lastMogAt < MOG_DEBOUNCE_SEC then
+		return
+	end
+	lastMogAt = now
+	requestBossFight:FireServer(boss.id)
 end
 
 -- Arrow -----------------------------------------------------------------------------------------------
@@ -401,6 +509,26 @@ function HudController:Start()
 		end
 	end)
 	refresh()
+
+	local requestBossFight = Remotes.getEvent("RequestBossFight")
+	elements.mogButton.Activated:Connect(function()
+		onMogPressed(requestBossFight)
+	end)
+	for _, name in { Attr.Mp, Attr.Activity, Attr.WorldId } do
+		player:GetAttributeChangedSignal(name):Connect(refreshMog)
+	end
+	task.spawn(function()
+		while player.Parent do
+			local boss = bossInRange()
+			if boss ~= mogBoss then
+				mogBoss = boss
+				refreshMog()
+			elseif boss == nil and elements.mogButton.Visible then
+				refreshMog()
+			end
+			task.wait(MOG_CHECK_SEC)
+		end
+	end)
 
 	task.spawn(function()
 		while player.Parent do
