@@ -88,6 +88,37 @@ named role. Line numbers are for `main` at `dde2064` (build 1)._
 - **Actual:** the table says 12:28 (pod counts), 2 s under 12:30. Only the wording is off.
 - **Route:** scenarist: write the band as "12:15-15:00" (or "~12:30-15:00"); qa changes the target to match.
 
+### QA-11 [systems] Corrupt schemaVersion below 1 throws in migrate and strands the player   S3
+- **Found by:** qa code review (T-046, sprint 2). Test: `tests/server/Specs/Persistence.spec.luau`
+  "migrate does not throw on a corrupt version below 1".
+- **File:** `src/server/Data/Util/ProfileSchema.luau:122-137` (`migrate`), caller `src/server/Data/DataService.luau:183`.
+- **Steps:** a save with `schemaVersion = 0` (or -1, or 0.5) loads; `migrate` loops `while version < 1`, finds no
+  `MIGRATIONS[0]` and the `assert` throws.
+- **Expected:** treated as v1 like a missing/NaN version (the comment at line 126 says "corrupt field: treat as v1").
+- **Actual:** `load()` errors in its spawned thread after the lock is taken: no `DataLoaded`, no kick, the session
+  stays locked and autosaves. Only reachable through a corrupt record (no client path), so S3.
+- **Fix hint:** treat any version that is not an integer >= 1 as 1:
+  `if type(version) ~= "number" or version ~= version or version < 1 or version % 1 ~= 0 then version = 1 end`.
+
+### QA-F7 [gameplay] No pure roll helper, so the 100,000-roll test can't reach the real roller   S3 (sprint 2)
+- **Found by:** qa (T-046). Architecture 1b/4b list no roll function; `tryHatch` needs a Player, coins and the
+  60-pet cap, so 100,000 rolls through it are not possible.
+- **Ask:** T-028 puts the weighted pick in `src/server/Gameplay/Util/PetRoll.luau` as
+  `PetRoll.pick(pets: { EggPet }, rng: Random): PetId` (pure, no profile access) and PetService uses it with its
+  one server `Random`. Gameplay-internal helper, so no Contract request is needed.
+- **Test waiting on it:** `tests/server/Specs/PetRoll.spec.luau` (also accepts `PetService.rollPet(eggId, rng)`);
+  SKIPs until then. The reference-roller and odds-vs-GDD checks already run.
+- **Fold into:** T-028 acceptance ("roll through a pure `Util/PetRoll.pick`").
+
+### QA-F8 [gameplay] Equip/unequip/delete have no server-callable entry, so QA-5 is only checked statically   S3 (sprint 2)
+- **Found by:** qa (T-046). Architecture 1b lists only the `EquipPet`/`DeletePets` remote handlers.
+- **Ask:** the handlers call `PetService.setEquipped(player, petUid, equip): (boolean, string?)` and
+  `PetService.deletePets(player, petUids): (boolean, string?)` after the argument checks. Public, so
+  integration-programmer adds both to architecture 1b (Contract request from gameplay).
+- **Tests:** `tests/server/Specs/PetEquip.spec.luau` (Play mode: counts `MultiplierService.refresh` calls and
+  checks M = 1 + bonus) SKIPs until then. `python3 -I tests/static/check_authority.py` checks QA-5 statically
+  now (PENDING until PetService exists; `--strict` makes it fail).
+
 ## Closed
 
 ### QA-6 [qa] Static checker false positives   S3   (fixed in build 1 check)

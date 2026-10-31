@@ -1,0 +1,14 @@
+-- qa selftest fixture (not synced, not linted): every client-authority mistake once.
+local Attr = Types.PlayerAttr
+local function rollEgg(egg)
+	local r = math.random(1, 10000)
+	for _, entry in egg.pets do
+		r -= entry.weight
+		if r <= 0 then
+			return entry.petId
+		end
+	end
+end
+player:SetAttribute(Attr.Coins, 999999)
+player.leaderstats.Rebirths.Value = 50
+Remotes.getEvent("HatchEgg"):FireServer(eggId, 1, coinsLeft)

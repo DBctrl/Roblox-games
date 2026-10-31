@@ -1,0 +1,35 @@
+-- qa selftest fixture: equip forgets the refresh (FAIL); delete refreshes through a helper (PASS).
+local MultiplierService = require(script.Parent.MultiplierService)
+
+local function removeFromEquipped(data, uid)
+	local i = table.find(data.pets.equipped, uid)
+	if i then
+		table.remove(data.pets.equipped, i)
+	end
+end
+
+local function refreshM(player)
+	MultiplierService.refresh(player)
+end
+
+function PetService.setEquipped(player, uid, equip)
+	DataService.update(player, function(data)
+		if equip then
+			table.insert(data.pets.equipped, uid)
+		else
+			removeFromEquipped(data, uid)
+		end
+	end)
+	return true
+end
+
+function PetService.deletePets(player, uids)
+	DataService.update(player, function(data)
+		for _, uid in uids do
+			removeFromEquipped(data, uid)
+			data.pets.inventory[uid] = nil
+		end
+	end)
+	refreshM(player)
+	return true
+end
