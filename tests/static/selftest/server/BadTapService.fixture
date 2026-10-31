@@ -1,0 +1,14 @@
+-- qa selftest fixture for check_handlers.py --selftest. NOT game code: never synced, never linted.
+-- Breaks every rule on purpose: no rate limit, no type/finite/integer check, no DataLoaded, yields in Init,
+-- creates its own RemoteEvent.
+local T = {}
+function T.Init()
+	task.wait(1)
+end
+function T.Start()
+	local extra = Instance.new("RemoteEvent")
+	Remotes.getEvent("TapBatch").OnServerEvent:Connect(function(p, n)
+		TapService.addMp(p, n)
+	end)
+end
+return T
