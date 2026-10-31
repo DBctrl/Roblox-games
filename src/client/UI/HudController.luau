@@ -260,6 +260,7 @@ local function build(): Elements
 	end
 	panelButton("ToolsButton", "Tools", 1, Theme.good, "Tools")
 	panelButton("PodsButton", "Pods", 2, Theme.good, "Pods")
+	panelButton("PetsButton", "Pets", 3, Theme.panelLight, "Pets") -- T-036 (PetsController)
 
 	-- Top-left: rebirth button (after FirstWin). "REBIRTH READY" pulses when coins reach the cost (GDD 4.5).
 	local rebirthButton = Ui.button({
