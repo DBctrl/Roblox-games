@@ -12,7 +12,7 @@
 --   EconomyConfig.RANKS  = { { name, lifetimeMp } } (index = rank 1..12)
 --   EconomyConfig.TAP_CAP_PER_SEC, EconomyConfig.INTERACT_RANGE
 --   MapLayout.getBossStage(bossId: string): BasePart?            (nil while streamed out)
---   MapLayout.getShopStands(kind: "Tools" | "Robux"): { BasePart }
+--   MapLayout.getShopKindOf(inst): "Tools" | "Robux" | nil (prompts are matched by walking their ancestors)
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -185,21 +185,21 @@ function GameData.bossStage(bossId: string): BasePart?
 	return nil
 end
 
--- True if `prompt` belongs to a shop stand of `kind` ("Tools" or "Robux").
+-- True if `prompt` belongs to a shop stand of `kind` ("Tools" or "Robux"). Walks the prompt's ancestors and asks
+-- MapLayout which shop each one is (architecture 1f, CR-4: there is no `getShopStands`). Stops at Workspace.
 function GameData.isShopPrompt(prompt: ProximityPrompt, kind: string): boolean
 	ensure()
-	local fn = mapLayout and mapLayout.getShopStands
+	local fn = mapLayout and mapLayout.getShopKindOf
 	if type(fn) ~= "function" then
 		return false
 	end
-	local ok, stands = pcall(fn, kind)
-	if not ok or type(stands) ~= "table" then
-		return false
-	end
-	for _, stand in stands do
-		if typeof(stand) == "Instance" and prompt:IsDescendantOf(stand) then
-			return true
+	local node: Instance? = prompt.Parent
+	while node ~= nil and node ~= workspace do
+		local ok, shop = pcall(fn, node)
+		if ok and shop ~= nil then
+			return shop == kind
 		end
+		node = node.Parent
 	end
 	return false
 end
