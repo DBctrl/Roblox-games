@@ -1,0 +1,14 @@
+-- qa selftest fixture for check_handlers.py --selftest. NOT game code: never synced, never linted.
+-- A LYING Guard: isIntInRange does no checks, so a handler that relies on it must still FAIL.
+-- isShortString is honest, so RequestBossFight (OneLineInitBoss.fixture) may rely on it.
+local Guard = {}
+
+function Guard.isIntInRange(x: any, lo: number, hi: number): boolean
+	return true
+end
+
+function Guard.isShortString(x: any, maxLen: number): boolean
+	return typeof(x) == "string" and #x >= 1 and #x <= maxLen
+end
+
+return Guard

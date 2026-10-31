@@ -1,0 +1,11 @@
+-- qa selftest fixture for check_handlers.py --selftest. NOT game code: never synced, never linted.
+-- BuyPod relies on the lying Guard.isIntInRange (Util/Guard.fixture), so BuyPod must FAIL.
+local P = {}
+function P.Start()
+	RateLimit.connect("BuyPod", function(p, i)
+		if not DataService.isLoaded(p) or not Guard.isIntInRange(i, 1, 7) then
+			return
+		end
+	end)
+end
+return P

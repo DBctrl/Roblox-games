@@ -1,0 +1,17 @@
+-- qa selftest fixture for check_handlers.py --selftest. NOT game code: never synced, never linted.
+-- One-line Init() followed by a Start() that yields: no Init-yield FAIL. RequestBossFight uses the honest
+-- Guard.isShortString, so it must PASS.
+local B = {}
+
+function B.Init() end
+
+function B.Start()
+	task.wait(1)
+	RateLimit.connect("RequestBossFight", function(p, bossId)
+		if not DataService.isLoaded(p) or not Guard.isShortString(bossId, 32) then
+			return
+		end
+	end)
+end
+
+return B

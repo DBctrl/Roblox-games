@@ -5,12 +5,16 @@ Owned by qa. Pure standard library, no Studio needed. Run from the repo (or work
 
     python3 -I tests/static/check_handlers.py           # all C->S remotes
     python3 -I tests/static/check_handlers.py --strict  # PENDING (handler not written yet) also fails
-    python3 -I tests/static/check_handlers.py --selftest  # runs on tests/static/selftest (must report FAILs)
+    python3 -I tests/static/check_handlers.py --selftest  # runs on tests/static/selftest
+      expected: TapBatch FAIL, BuyPod FAIL (lying Guard), BuyTool PASS, RequestBossFight PASS (one-line Init,
+      honest Guard.isShortString), 3 repo-wide FAILs, all from BadTapService.fixture
 
 Heuristic, file-level review aid (not a proof): for each C->S remote in src/shared/Contracts/Remotes.luau it
 finds the server file that connects it (`RateLimit.connect("Name"` or `getEvent("Name")`) and checks that file
 for the rules below. A FAIL is a review lead for qa to confirm, then file in docs/qa/bugs.md.
 Repo-wide checks: no RemoteEvent/RemoteFunction created outside Contracts, no yield inside an Init().
+`Guard.isIntInRange` / `isShortString` / `isFinite` / `clampFinite` calls count as checks only after the checker has
+confirmed that the helper's own body in `Util/Guard.luau` does them (QA-6).
 """
 
 from __future__ import annotations
@@ -34,6 +38,15 @@ NO_ARGS = {"RequestRebirth", "ClaimDailyReward"}
 M1 = ["TapBatch", "RequestBossFight", "BuyTool"]
 
 YIELDS = re.compile(r"task\.wait|wait\(|:WaitForChild\(|:Wait\(\)|Async\(|\.waitForData\(")
+
+# Shared validator helpers (QA bug QA-6 fix): a call to one of these counts as the listed checks, but only after
+# check_validators() has confirmed the helper's own body really does them. Maps helper -> (body pattern, checks).
+VALIDATORS = {
+    "isFinite": (r"typeof\(x\)\s*==\s*\"number\".*x\s*==\s*x.*math\.huge", {"type", "finite"}),
+    "isIntInRange": (r"isFinite\(x\).*%\s*1\s*==\s*0.*>=\s*lo.*<=\s*hi", {"type", "finite", "integer"}),
+    "isShortString": (r"typeof\(x\)\s*==\s*\"string\".*#x\s*<=\s*maxLen", {"type", "strlen"}),
+    "clampFinite": (r"isFinite\(x\)", {"type", "finite"}),
+}
 
 
 def c2s_remotes() -> list[str]:
@@ -71,20 +84,42 @@ def handler_file(name: str, files: dict[str, str]) -> str | None:
     return None
 
 
-def check_remote(name: str, text: str) -> list[str]:
+def check_validators(files: dict[str, str]) -> dict[str, set[str]]:
+    """Checks each `Guard.<helper>` really validates; returns helper -> checks it may stand in for."""
+    trusted: dict[str, set[str]] = {}
+    for path, text in files.items():
+        if not path.replace(os.sep, "/").endswith(("/Util/Guard.luau", "/Util/Guard.fixture")):
+            continue
+        for helper, (body_pat, checks) in VALIDATORS.items():
+            m = re.search(r"function\s+Guard\." + helper + r"\s*\([^)]*\)(.*?)^end\b", text, re.S | re.M)
+            if m and re.search(body_pat, m.group(1), re.S):
+                trusted[helper] = checks
+    return trusted
+
+
+def helper_checks(text: str, trusted: dict[str, set[str]]) -> set[str]:
+    out: set[str] = set()
+    for helper, checks in trusted.items():
+        if re.search(r"Guard\." + helper + r"\(", text):
+            out |= checks
+    return out
+
+
+def check_remote(name: str, text: str, trusted: dict[str, set[str]] | None = None) -> list[str]:
     problems = []
+    via = helper_checks(text, trusted or {})
     if not re.search(r'RateLimit\.(connect|check)\([^)]*"' + name + '"', text):
         problems.append("no RateLimit.connect/check for this remote (rate limit before any work)")
     if not re.search(r"DataLoaded|isLoaded\(|getData\(", text):
         problems.append("no DataLoaded / DataService.isLoaded check")
-    if name not in NO_ARGS and "typeof(" not in text and not re.search(r"type\(\w+\)\s*~=", text):
+    if name not in NO_ARGS and "type" not in via and "typeof(" not in text and not re.search(r"type\(\w+\)\s*~=", text):
         problems.append("no typeof()/type() argument check")
     if name in INTEGER_ARGS:
-        if not re.search(r"(\w+)\s*~=\s*\1\b|math\.huge|isFinite|finite", text):
+        if "finite" not in via and not re.search(r"(\w+)\s*~=\s*\1\b|math\.huge", text):
             problems.append("no finite-number check (x ~= x / math.huge)")
-        if not re.search(r"math\.floor\(|%\s*1\b|isInteger", text):
+        if "integer" not in via and not re.search(r"math\.floor\(|%\s*1\b", text):
             problems.append("no integer check (math.floor / % 1)")
-    if name in STRING_ARGS and not re.search(r"#\w+\s*[<>]=?|string\.len\(|utf8\.len\(", text):
+    if name in STRING_ARGS and "strlen" not in via and not re.search(r"#\w+\s*[<>]=?|string\.len\(|utf8\.len\(", text):
         problems.append("no string length cap")
     return problems
 
@@ -93,6 +128,7 @@ def main() -> int:
     strict = "--strict" in sys.argv
     src = SELFTEST if "--selftest" in sys.argv else SRC
     files = {p: read(p) for p in luau_files(src)}
+    trusted = check_validators(files)
     remotes = c2s_remotes()
     order = M1 + [r for r in remotes if r not in M1]
     fails = pending = 0
@@ -103,7 +139,7 @@ def main() -> int:
             pending += 1
             print(f"  PENDING {name}: no server handler yet")
             continue
-        problems = check_remote(name, files[path])
+        problems = check_remote(name, files[path], trusted)
         if problems:
             fails += 1
             print(f"  FAIL    {name} ({rel(path)}): " + "; ".join(problems))
@@ -119,8 +155,10 @@ def main() -> int:
         if "/shared/Contracts/" not in unix and re.search(r"OnServerEvent:Connect", text) and "RateLimit" not in text:
             fails += 1
             print(f"  FAIL    {rel(path)}: OnServerEvent:Connect without RateLimit")
-        for m in re.finditer(r"function\s+[\w.:]+[.:]Init\s*\([^)]*\)(.*?)\nend\b", text, re.S):
-            if YIELDS.search(m.group(1)):
+        # QA-6 fix: a one-line `function X.Init() end` has an empty body; a multi-line Init ends at the first
+        # `end` in column 0 (StyLua puts a top-level function's `end` there), never running into Start().
+        for m in re.finditer(r"^function\s+[\w.:]+[.:]Init\s*\([^)]*\)(?:[ \t]*end\b|(.*?)^end\b)", text, re.S | re.M):
+            if m.group(1) and YIELDS.search(m.group(1)):
                 fails += 1
                 line = text[: m.start()].count("\n") + 1
                 print(f"  FAIL    {rel(path)}:{line}: Init() yields (task.wait / WaitForChild / Wait / *Async)")

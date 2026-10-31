@@ -109,6 +109,45 @@ return function(t: TestKit.Suite)
 		end
 	end)
 
+	-- QA-7 (build 1): BossService checks EconomyConfig's boss `world` against ZoneService's world, and
+	-- ZoneService.isNearBoss resolves the stage through MapLayout.BOSS_IDS. A boss whose id or world differs
+	-- between the two tables can never be fought. Same check runs without Studio: tests/static/check_boss_ids.py.
+	t.test("BOSSES ids and worlds match MapLayout.BOSS_IDS (stage row order)", function()
+		local MapLayout: any = TestKit.tryRequire(Shared, { "World", "MapLayout" })
+		if MapLayout == nil then
+			t.ok(false, "Shared.World.MapLayout not found")
+			return
+		end
+		local layoutIds = MapLayout.BOSS_IDS
+		t.eq(type(layoutIds), "table", "MapLayout.BOSS_IDS")
+		local list = entries(E.BOSSES, NEED)
+		local byWorld: { [number]: { string } } = {}
+		for i, e in list do
+			local world = field(e, WORLD, `boss {i}`)
+			local id = field(e, BOSS_ID, `boss {i}`)
+			byWorld[world] = byWorld[world] or {}
+			table.insert(byWorld[world], id)
+			t.eq(MapLayout.getBossWorld(id), world, `MapLayout.getBossWorld({id})`)
+		end
+		local layoutCount = 0
+		for world, ids in layoutIds do
+			layoutCount += #ids
+			local config = byWorld[world] or {}
+			t.eq(#config, #ids, `world {world} boss count`)
+			for i, id in ids do
+				t.eq(config[i], id, `world {world} stage {i} boss id`)
+			end
+		end
+		t.eq(layoutCount, #list, "MapLayout boss count == EconomyConfig boss count")
+		if type(E.BOSS_BY_ID) == "table" then
+			for _, ids in layoutIds do
+				for _, id in ids do
+					t.ok(E.BOSS_BY_ID[id] ~= nil, `BOSS_BY_ID[{id}]`)
+				end
+			end
+		end
+	end)
+
 	t.test("RANKS match GDD 7", function()
 		local list = entries(E.RANKS, LIFETIME)
 		t.eq(#list, #GddTables.RANKS, "rank count")
