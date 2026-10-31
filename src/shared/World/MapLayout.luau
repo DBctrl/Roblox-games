@@ -29,7 +29,9 @@ ServerStorage are ignored, so templates may carry tags too.
 
 Lean v1 (D-034, T-038), World 1 only. Builder must create in Glow Town (WorldId 1):
   - 7 BossStage (BOSS_IDS[1]), 5 Pod (PodIndex 1..5), 1 Spawn, ShopStand Tools + Robux,
-  - EggStand "BasicEgg" and "ShinyEgg" (W1_EGG_IDS; "StarEgg" stand later, T-073),
+  - EggStand "BasicEgg", "ShinyEgg", "StarEgg" and "GalaxyEgg" (W1_EGG_IDS),
+  - EggStand named "GalaxyEggStand": EggId = "GalaxyEgg", WorldId = 1, at (-90, 0, -15)
+    (D-057: Galaxy Egg moved from Neon Runway to Glow Town),
   - 1 Portal with ToWorldId = 2. Touching it only shows "World 2 coming Saturday!" (no teleport
     until T-092). Make it a Part touch box (CanCollide off, CanTouch on) in front of the arch.
   Pod boxes: make the box cover the whole chair area and at least 8 studs tall from the floor, so
@@ -123,8 +125,8 @@ MapLayout.BOSS_IDS = table.freeze({
 	}),
 })
 
--- Egg stands builder places in World 1 for the lean v1 (D-034). StarEgg (Robux) follows in T-073.
-MapLayout.W1_EGG_IDS = table.freeze({ "BasicEgg", "ShinyEgg" })
+-- Egg stands builder places in World 1 for the lean v1 (D-034). Galaxy Egg moved to World 1 (D-057).
+MapLayout.W1_EGG_IDS = table.freeze({ "BasicEgg", "ShinyEgg", "StarEgg", "GalaxyEgg" })
 
 -- Rank look template names, rank order. Must equal EconomyConfig.RANKS[i].lookId (qa checks).
 MapLayout.LOOK_IDS = table.freeze({
@@ -227,6 +229,7 @@ MapLayout.WORLDS = table.freeze({
 		BasicEgg = Vector3.new(-30, 0, -15),
 		ShinyEgg = Vector3.new(-50, 0, -15),
 		StarEgg = Vector3.new(-70, 0, -15),
+		GalaxyEgg = Vector3.new(-90, 0, -15), -- moved from World 2 (D-057)
 	}, { Vector3.new(-60, 0, 70), Vector3.new(-70, 0, 70), Vector3.new(-50, 0, 70) }),
 	[2] = buildWorld("Neon Runway", Vector3.new(4000, 0, 0), MapLayout.BOSS_IDS[2], {
 		[6] = Vector3.new(-20, 0, 45),
@@ -234,7 +237,6 @@ MapLayout.WORLDS = table.freeze({
 	}, {
 		NeonEgg = Vector3.new(-30, 0, -15),
 		RunwayEgg = Vector3.new(-50, 0, -15),
-		GalaxyEgg = Vector3.new(-70, 0, -15),
 	}, nil),
 })
 
