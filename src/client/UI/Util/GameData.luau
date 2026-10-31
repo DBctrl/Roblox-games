@@ -30,6 +30,7 @@ export type Egg = {
 	price: number,
 	pets: { EggPet }, -- same table, same order the server rolls (architecture 4b)
 	oddsValid: boolean, -- weights are whole, positive and sum to ODDS_TOTAL
+	pityAt: number?, -- Robux eggs: every Nth hatch with no Legendary+ is forced (GDD 5); nil = no pity
 }
 export type Pet = { id: string, name: string, rarity: string, bonus: number }
 
@@ -312,7 +313,15 @@ function GameData.egg(eggId: string): Egg?
 		price = num(pick(entry, { "price" }), 0),
 		pets = pets,
 		oddsValid = valid and #pets > 0 and sum == GameData.oddsTotal(),
+		pityAt = if type(entry.pityAt) == "number" and entry.pityAt >= 2 then entry.pityAt else nil,
 	}
+end
+
+-- Forced pity roll weights (Legendary, Mythic) out of ODDS_TOTAL: 9000 / 1000 (GDD 5, architecture 4b).
+function GameData.pityWeights(): (number, number)
+	ensure()
+	return num(economy and economy.PITY_LEGENDARY_WEIGHT, 9000),
+		num(economy and economy.PITY_MYTHIC_WEIGHT, 1000)
 end
 
 -- Pet `petId` from EconomyConfig.PETS; nil if unknown.

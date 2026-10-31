@@ -9,11 +9,13 @@
 --   "Need 600 MP (you: 412)" below the threshold, pulsing "MOG!" at or above it, "MOGGING..." during a fight.
 -- * First minute (GDD 9): pulsing "TAP to power up!" with a tap ring until the first tap; meter "100 MP to beat
 --   Sleepy Sid"; when full, "GO MOG HIM!"; a light beam from the player to Sid's stage until the first win.
--- * Shop buttons are hidden until FirstWin (GDD 8a). The Robux shop button arrives with T-057; this HUD has no
---   purchase prompt of any kind.
+-- * Shop buttons are hidden until FirstWin (GDD 8a), including the Robux "Shop" button (T-057, opens
+--   Panels/RobuxShopPanel). This HUD has no purchase prompt of any kind.
+-- * Boost line (T-057, GDD 8h, legal 2.14): while Hype Snack runs, "Hype x2 9:41 / max 2:00:00 (in-game time)"
+--   from the server's HypeEndsAt attribute, updated once per second.
 -- * The Roblox player list starts collapsed; the "Players" button toggles it.
 -- * T-034: "Pods" button (ShopController pod shop), "Settings" button (SettingsController), a pod income line
---   from IdleMpPerSec, and a rebirth button that pulses "REBIRTH READY" when Coins >= RebirthCost; it opens
+--   from IdleMpPerSec, a "Daily" button (T-055, RewardsController), and a rebirth button that pulses "REBIRTH READY" when Coins >= RebirthCost; it opens
 --   Panels/RebirthPanel (confirm screen, the only RequestRebirth sender).
 -- * Updates are event-driven (attribute changes, max 5 Hz from the server) plus one 2 Hz check for the arrow.
 
@@ -61,6 +63,7 @@ type Elements = {
 	mogScale: UIScale,
 	mogPulse: Tween,
 	idleLabel: TextLabel,
+	boostLabel: TextLabel,
 	rebirthButton: TextButton,
 	rebirthScale: UIScale,
 	rebirthPulse: Tween,
@@ -168,6 +171,17 @@ local function build(): Elements
 	})
 	Ui.textLimit(20).Parent = idleLabel
 
+	-- Boost time left and the 2 h cap (T-057, GDD 8h). Boost time counts only while in game.
+	local boostLabel = Ui.label({
+		Name = "BoostTime",
+		Size = UDim2.fromScale(0.8, 0.14),
+		LayoutOrder = 5,
+		TextColor3 = Theme.accent,
+		Visible = false,
+		Parent = top,
+	})
+	Ui.textLimit(18).Parent = boostLabel
+
 	-- Tap hint: pulsing text and a tap ring in the lower middle of the screen.
 	local tapHint = Ui.new("Frame", {
 		Name = "TapHint",
@@ -231,17 +245,17 @@ local function build(): Elements
 		BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(1, 0.5),
 		Position = UDim2.new(1, -8, 0.5, 0),
-		Size = UDim2.fromScale(0.13, 0.3),
+		Size = UDim2.fromScale(0.13, 0.44),
 		Visible = false,
 		Parent = screen,
 	}, {
-		Ui.sizeLimit(88, 150, 180, 280),
+		Ui.sizeLimit(88, 260, 180, 400), -- 5 buttons of >= 44 px plus padding
 		Ui.new("UIListLayout", {
 			FillDirection = Enum.FillDirection.Vertical,
 			HorizontalAlignment = Enum.HorizontalAlignment.Right,
 			VerticalAlignment = Enum.VerticalAlignment.Center,
 			SortOrder = Enum.SortOrder.LayoutOrder,
-			Padding = UDim.new(0.04, 0),
+			Padding = UDim.new(0.03, 0),
 		}),
 	})
 	local function panelButton(name: string, text: string, order: number, color: Color3, panel: string)
@@ -249,7 +263,7 @@ local function build(): Elements
 			Name = name,
 			Text = text,
 			LayoutOrder = order,
-			Size = UDim2.fromScale(1, 0.3),
+			Size = UDim2.fromScale(1, 0.17),
 			BackgroundColor3 = color,
 			Parent = shopButtons,
 		})
@@ -261,6 +275,8 @@ local function build(): Elements
 	panelButton("ToolsButton", "Tools", 1, Theme.good, "Tools")
 	panelButton("PodsButton", "Pods", 2, Theme.good, "Pods")
 	panelButton("PetsButton", "Pets", 3, Theme.panelLight, "Pets") -- T-036 (PetsController)
+	panelButton("RobuxShopButton", "Shop", 4, Theme.accent, "RobuxShop") -- T-057 (Panels/RobuxShopPanel)
+	panelButton("DailyButton", "Daily", 5, Theme.panelLight, "Daily") -- T-055 (RewardsController)
 
 	-- Top-left: rebirth button (after FirstWin). "REBIRTH READY" pulses when coins reach the cost (GDD 4.5).
 	local rebirthButton = Ui.button({
@@ -315,6 +331,7 @@ local function build(): Elements
 		mogScale = mogScale,
 		mogPulse = mogPulse,
 		idleLabel = idleLabel,
+		boostLabel = boostLabel,
 		rebirthButton = rebirthButton,
 		rebirthScale = rebirthScale,
 		rebirthPulse = rebirthPulse,
@@ -402,6 +419,17 @@ local function refresh()
 		rebirthButton.BackgroundColor3 = Theme.panelLight
 		elements.rebirthPulse:Cancel()
 		elements.rebirthScale.Scale = 1
+	end
+end
+
+-- Hype Snack time left (HypeEndsAt is server time, 0 = off) and the 2 h cap.
+local BOOST_CAP_TEXT = "2:00:00"
+local function refreshBoost(elements: Elements)
+	local left = Ui.numAttr(Attr.HypeEndsAt, 0) - workspace:GetServerTimeNow()
+	elements.boostLabel.Visible = left > 0
+	if left > 0 then
+		elements.boostLabel.Text =
+			`Hype x2 {NumberFormat.duration(left)} / max {BOOST_CAP_TEXT} (in-game time)`
 	end
 end
 
@@ -628,6 +656,13 @@ function HudController:Start()
 				refreshMog()
 			end
 			task.wait(MOG_CHECK_SEC)
+		end
+	end)
+
+	task.spawn(function()
+		while player.Parent do
+			refreshBoost(elements)
+			task.wait(1)
 		end
 	end)
 

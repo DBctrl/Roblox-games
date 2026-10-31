@@ -6,7 +6,8 @@
 --   the HUD "Tools" button (shown after FirstWin). A prompt only opens UI: never a purchase prompt (GDD 8b).
 -- * Shows the current tool and only the NEXT tool (ToolIndex + 1) with its cost and MP per tap. Buy fires
 --   `BuyTool(ToolIndex + 1)`; ShopService re-checks index, world unlock and coins on the server.
--- * Coins only. The Robux shop (ladder, boosts, RequestPurchase) is T-057 and is not in this file.
+-- * Coins only here. The Robux shop (ladder, boosts, pets, cosmetics, Starter Pack pop-up; RequestPurchase) is
+--   Panels/RobuxShopPanel (T-057), started from this controller's Start.
 -- * Pod shop (T-034, GDD 4.3): opened from the HUD "Pods" button. Lists the World 1 Glow Pods with base MP/s and
 --   coin cost; owned pods (PodsMask bit i, architecture 1e) say "Owned" or "You're here" (CurrentPod). Buy fires
 --   `BuyPod(index)`; ShopService re-checks ownership, world unlock and coins. World 2 pods arrive with Update 1,
@@ -22,6 +23,7 @@ local Remotes = require(Contracts:WaitForChild("Remotes"))
 local Types = require(Contracts:WaitForChild("Types"))
 
 local GameData = require(script.Parent.Util.GameData)
+local RobuxShopPanel = require(script.Parent.Panels.RobuxShopPanel)
 local Ui = require(script.Parent.Util.Ui)
 local UiEvents = require(script.Parent.Util.UiEvents)
 
@@ -345,6 +347,7 @@ function ShopController:Start()
 
 	local pods = buildPods(Remotes.getEvent("BuyPod"))
 	podPanel = pods
+	task.spawn(RobuxShopPanel.start) -- its own panel; waits for the RequestPurchase remote
 
 	-- One panel at a time: opening any other panel closes these two.
 	UiEvents.OpenPanel:Connect(function(name: string)
