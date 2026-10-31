@@ -18,6 +18,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local ActivityService = require(script.Parent.ActivityService)
+local BossService = require(script.Parent.BossService)
 local Deps = require(script.Parent.Util.Deps)
 local DuelMath = require(script.Parent.Util.DuelMath)
 local EconomyConfig = require(ReplicatedStorage.Shared.Gameplay.EconomyConfig)
@@ -302,6 +303,43 @@ local function startRematchWindow(duel: Duel)
 	end)
 end
 
+-- Week rollover, reward caps and the coin payout for a winner. Returns the coins actually added (0 when capped).
+local function payWinner(winner: Player, loser: Player): number
+	local dataApi = Deps.data()
+	local nowUnix = os.time()
+	local week = DuelMath.weekId(nowUnix)
+	local rewarded = false
+	local weekWins = 0
+	dataApi.update(winner, function(d)
+		if d.duel.weekId ~= week then
+			d.duel.weekId = week
+			d.duel.weekWins = 0
+		end
+		local log = DuelMath.pruneRewardLog(d.duel.rewardLog, nowUnix)
+		d.stats.duelWins += 1
+		if DuelMath.rewardAllowed(log, nowUnix, loser.UserId) then
+			rewarded = true
+			d.duel.weekWins += 1
+			table.insert(log, { t = nowUnix, opp = loser.UserId })
+		end
+		d.duel.rewardLog = log
+		weekWins = d.duel.weekWins
+	end)
+	setAttr(winner, Attr.DuelWinsWeek, weekWins)
+	if not rewarded then
+		return 0
+	end
+	local coins = DuelMath.rewardCoins(BossService.bestCoinsPerSec(winner))
+	if coins <= 0 then
+		return 0
+	end
+	if dataApi.addCoins(winner, coins, "DuelReward") <= 0 then
+		return 0
+	end
+	Deps.economy(winner, "Source", coins, "DuelReward")
+	return coins
+end
+
 local function showResult(duel: Duel)
 	local seq = phaseFor(duel, "Result")
 	local a, b = duel.sides[1], duel.sides[2]
@@ -321,7 +359,7 @@ local function showResult(duel: Duel)
 	end
 	local coins = 0
 	if winner and loser then
-		-- T-050: winner reward (caps, coins, weekly win) is paid here
+		coins = payWinner(winner.player, loser.player)
 		Deps.custom(winner.player, "DuelWon", now() - duel.startedAt)
 	else
 		for _, side in duel.sides do
