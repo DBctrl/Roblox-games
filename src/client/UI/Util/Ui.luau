@@ -167,6 +167,102 @@ function Ui.meter(props: { [string]: any }, fillColor: Color3): (Frame, Frame, T
 	return frame, fill, text
 end
 
+export type Panel = {
+	screen: ScreenGui,
+	root: Frame,
+	title: TextLabel,
+	body: Frame,
+	close: TextButton,
+}
+
+-- A centred modal panel in its own ScreenGui: title, close (X) button and a body frame below the title.
+-- `scale` is the size as a fraction of the screen; minPx / maxPx clamp it for phones and desktops.
+function Ui.panel(
+	name: string,
+	titleText: string,
+	displayOrder: number,
+	scale: Vector2,
+	minPx: Vector2,
+	maxPx: Vector2
+): Panel
+	local screen = Ui.screen(name, displayOrder)
+	local root = Ui.new("Frame", {
+		Name = name,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(scale.X, scale.Y),
+		BackgroundColor3 = Ui.Theme.panel,
+		Visible = false,
+		Parent = screen,
+	}, {
+		Ui.corner(0.05),
+		Ui.stroke(3),
+		Ui.sizeLimit(minPx.X, minPx.Y, maxPx.X, maxPx.Y),
+	})
+	local title = Ui.label({
+		Name = "Title",
+		Text = titleText,
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromScale(0.5, 0.02),
+		Size = UDim2.fromScale(0.66, 0.1),
+		Parent = root,
+	})
+	Ui.textLimit(32).Parent = title
+	local close = Ui.button({
+		Name = "Close",
+		Text = "X",
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -6, 0, 6),
+		Size = UDim2.fromScale(0.1, 0.1),
+		BackgroundColor3 = Ui.Theme.bad,
+		Parent = root,
+	})
+	Ui.new("UIAspectRatioConstraint", { AspectRatio = 1, Parent = close })
+	Ui.textLimit(24).Parent = close
+	close.Activated:Connect(function()
+		root.Visible = false
+	end)
+	local body = Ui.new("Frame", {
+		Name = "Body",
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromScale(0.5, 0.14),
+		Size = UDim2.fromScale(0.94, 0.84),
+		Parent = root,
+	})
+	return { screen = screen, root = root, title = title, body = body, close = close }
+end
+
+-- A vertical scrolling list. Rows are sized in pixels (>= 44 px tall); the canvas grows with the content.
+function Ui.scrollList(props: { [string]: any }, paddingPx: number?): ScrollingFrame
+	local defaults: { [string]: any } = {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 6,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+	}
+	for key, value in props do
+		defaults[key] = value
+	end
+	local list = Ui.new("ScrollingFrame", defaults)
+	Ui.new("UIListLayout", {
+		FillDirection = Enum.FillDirection.Vertical,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Padding = UDim.new(0, paddingPx or 6),
+		Parent = list,
+	})
+	return list
+end
+
+-- "Can press" look (`color`, default green) or "can't press" look (grey, no hover colour).
+function Ui.setEnabled(button: TextButton, enabled: boolean, color: Color3?)
+	button.BackgroundColor3 = if enabled then (color or Ui.Theme.good) else Ui.Theme.grey
+	button.AutoButtonColor = enabled
+end
+
 -- Yields until the server has loaded this player's profile (DataLoaded attribute).
 function Ui.waitForData(dataLoadedAttr: string)
 	local player = Players.LocalPlayer

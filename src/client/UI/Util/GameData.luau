@@ -20,11 +20,16 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 export type Boss = { id: string, name: string, worldId: number, need: number, coins: number }
 export type Tool = { index: number, name: string, power: number, cost: number, worldId: number }
 export type Rank = { index: number, name: string, need: number }
+export type Pod = { index: number, name: string, mpPerSec: number, cost: number, worldId: number }
 
 local GameData = {}
 
 local DEFAULT_TAP_CAP = 12 -- architecture 1c; used only if EconomyConfig is missing
 local DEFAULT_RANGE = 20
+-- GDD 4.5, 4.6 and 5 fallbacks, used only if EconomyConfig lacks the constant.
+local DEFAULT_AUTO_TAP_RANK = 3
+local DEFAULT_AUTO_MOG_REBIRTHS = 1
+local DEFAULT_HATCH3_REBIRTHS = 2
 
 local function loadModule(folderName: string, moduleName: string): any
 	local shared = ReplicatedStorage:WaitForChild("Shared", 10)
@@ -75,6 +80,7 @@ end
 local bossCache: { Boss }? = nil
 local toolCache: { Tool }? = nil
 local rankCache: { Rank }? = nil
+local podCache: { Pod }? = nil
 
 function GameData.bosses(): { Boss }
 	ensure()
@@ -161,6 +167,88 @@ function GameData.ranks(): { Rank }
 	end
 	rankCache = list
 	return list
+end
+
+function GameData.pods(): { Pod }
+	ensure()
+	if podCache then
+		return podCache
+	end
+	local list: { Pod } = {}
+	local source = economy and economy.PODS
+	if type(source) == "table" then
+		for index, entry in ipairs(source) do
+			if type(entry) == "table" then
+				table.insert(list, {
+					index = index,
+					name = tostring(pick(entry, { "name", "displayName" }) or `Pod {index}`),
+					mpPerSec = num(pick(entry, { "mpPerSec" }), 0),
+					cost = num(pick(entry, { "cost" }), 0),
+					worldId = num(pick(entry, { "world", "worldId" }), 1),
+				})
+			end
+		end
+	end
+	podCache = list
+	return list
+end
+
+-- Calls a pure EconomyConfig formula; nil if it is missing or fails.
+local function formula(name: string, ...: any): number?
+	ensure()
+	local fn = economy and economy[name]
+	if type(fn) ~= "function" then
+		return nil
+	end
+	local ok, value = pcall(fn, ...)
+	if ok and type(value) == "number" and value == value then
+		return value
+	end
+	return nil
+end
+
+-- Coins for rebirth number `n` (1 = first). Display only: the server's RebirthCost attribute wins.
+function GameData.rebirthCost(n: number): number?
+	return formula("rebirthCost", n)
+end
+
+function GameData.rebirthMult(rebirths: number): number
+	return formula("rebirthMult", rebirths) or (1 + 0.5 * rebirths)
+end
+
+function GameData.coinRebirthMult(rebirths: number): number
+	return formula("coinRebirthMult", rebirths) or (1 + 0.1 * rebirths)
+end
+
+function GameData.autoTapRank(): number
+	ensure()
+	return num(economy and economy.AUTO_TAP_FREE_RANK, DEFAULT_AUTO_TAP_RANK)
+end
+
+function GameData.autoMogRebirths(): number
+	ensure()
+	return num(economy and economy.AUTO_MOG_REBIRTHS, DEFAULT_AUTO_MOG_REBIRTHS)
+end
+
+-- Hatch x3 unlock (GDD 5: Rebirth 2). TODO(CR-S2b): the constant's name is not in architecture 1c yet.
+function GameData.hatchThreeRebirths(): number
+	ensure()
+	return num(economy and (economy.HATCH_X3_REBIRTHS or economy.HATCH3_REBIRTHS), DEFAULT_HATCH3_REBIRTHS)
+end
+
+-- Rebirth counts that each add a pet slot (GDD 5: 3 and 8).
+function GameData.petSlotRebirths(): { number }
+	ensure()
+	local source = economy and economy.PET_SLOT_REBIRTHS
+	local out = {}
+	if type(source) == "table" then
+		for _, value in ipairs(source) do
+			if type(value) == "number" then
+				table.insert(out, value)
+			end
+		end
+	end
+	return out
 end
 
 function GameData.tapCapPerSec(): number

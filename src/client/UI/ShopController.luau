@@ -7,6 +7,10 @@
 -- * Shows the current tool and only the NEXT tool (ToolIndex + 1) with its cost and MP per tap. Buy fires
 --   `BuyTool(ToolIndex + 1)`; ShopService re-checks index, world unlock and coins on the server.
 -- * Coins only. The Robux shop (ladder, boosts, RequestPurchase) is T-057 and is not in this file.
+-- * Pod shop (T-034, GDD 4.3): opened from the HUD "Pods" button. Lists the World 1 Glow Pods with base MP/s and
+--   coin cost; owned pods (PodsMask bit i, architecture 1e) say "Owned" or "You're here" (CurrentPod). Buy fires
+--   `BuyPod(index)`; ShopService re-checks ownership, world unlock and coins. World 2 pods arrive with Update 1,
+--   so the list ends with "More pods in World 2 - coming Saturday!" (D-034).
 
 local Players = game:GetService("Players")
 local ProximityPromptService = game:GetService("ProximityPromptService")
@@ -190,6 +194,143 @@ local function onBuy(buyTool: RemoteEvent)
 	buyTool:FireServer(candidate.index)
 end
 
+-- Pod shop (T-034) -------------------------------------------------------------------------------------
+
+local POD_ROW_PX = 64
+local WORLD2_NOTICE = "More pods in World 2 - coming Saturday!"
+
+type PodRow = { pod: GameData.Pod, buy: TextButton }
+
+local podPanel: Ui.Panel? = nil
+local podRows: { PodRow } = {}
+local lastPodBuyAt = 0
+
+local function podOwned(index: number): boolean
+	local mask = math.floor(Ui.numAttr(Attr.PodsMask, 0))
+	return bit32.btest(mask, bit32.lshift(1, index)) -- bit i = pod i (architecture 1e)
+end
+
+local function refreshPods()
+	local p = podPanel
+	if p == nil or not p.root.Visible then
+		return
+	end
+	local coins = Ui.numAttr(Attr.Coins, 0)
+	local here = math.floor(Ui.numAttr(Attr.CurrentPod, 0))
+	for _, row in podRows do
+		local pod = row.pod
+		if podOwned(pod.index) then
+			row.buy.Text = if here == pod.index then "You're here" else "Owned"
+			Ui.setEnabled(row.buy, false)
+		elseif coins >= pod.cost then
+			row.buy.Text = `Buy {NumberFormat.abbreviate(pod.cost)}`
+			Ui.setEnabled(row.buy, true)
+		else
+			row.buy.Text = `Need {NumberFormat.abbreviate(pod.cost)}`
+			Ui.setEnabled(row.buy, false)
+		end
+	end
+end
+
+local function onBuyPod(buyPod: RemoteEvent, pod: GameData.Pod)
+	if podOwned(pod.index) or Ui.numAttr(Attr.Coins, 0) < pod.cost then
+		return
+	end
+	local now = os.clock()
+	if now - lastPodBuyAt < BUY_DEBOUNCE_SEC then
+		return
+	end
+	lastPodBuyAt = now
+	buyPod:FireServer(pod.index)
+end
+
+local function buildPods(buyPod: RemoteEvent): Ui.Panel
+	local p = Ui.panel(
+		"PodShop",
+		"Glow Pods",
+		20,
+		Vector2.new(0.6, 0.7),
+		Vector2.new(300, 280),
+		Vector2.new(560, 520)
+	)
+	local hint = Ui.label({
+		Name = "Hint",
+		Text = "Stand in a pod you own to earn MP every second.",
+		Size = UDim2.fromScale(1, 0.1),
+		TextColor3 = Theme.textDim,
+		Parent = p.body,
+	})
+	Ui.textLimit(20).Parent = hint
+	local list = Ui.scrollList({
+		Name = "List",
+		Position = UDim2.fromScale(0, 0.12),
+		Size = UDim2.fromScale(1, 0.88),
+		Parent = p.body,
+	})
+	for _, pod in GameData.pods() do
+		if pod.worldId ~= 1 then
+			continue -- World 2 pods ship with Update 1 (D-034)
+		end
+		local rowFrame = Ui.new("Frame", {
+			Name = `Pod{pod.index}`,
+			LayoutOrder = pod.index,
+			BackgroundColor3 = Theme.panelLight,
+			Size = UDim2.new(1, -10, 0, POD_ROW_PX),
+			Parent = list,
+		}, { Ui.corner(0.2) })
+		local name = Ui.label({
+			Name = "Name",
+			Text = pod.name,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Position = UDim2.fromScale(0.04, 0.08),
+			Size = UDim2.fromScale(0.56, 0.48),
+			Parent = rowFrame,
+		})
+		Ui.textLimit(24).Parent = name
+		local info = Ui.label({
+			Name = "Info",
+			Text = `+{NumberFormat.abbreviate(pod.mpPerSec)} MP/s (x your multiplier)`,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextColor3 = Theme.accent,
+			Position = UDim2.fromScale(0.04, 0.56),
+			Size = UDim2.fromScale(0.56, 0.36),
+			Parent = rowFrame,
+		})
+		Ui.textLimit(18).Parent = info
+		local buy = Ui.button({
+			Name = "Buy",
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -6, 0.5, 0),
+			Size = UDim2.new(0.36, 0, 1, -12),
+			Parent = rowFrame,
+		})
+		Ui.textLimit(22).Parent = buy
+		buy.Activated:Connect(function()
+			onBuyPod(buyPod, pod)
+		end)
+		table.insert(podRows, { pod = pod, buy = buy })
+	end
+	local notice = Ui.label({
+		Name = "World2Notice",
+		Text = WORLD2_NOTICE,
+		LayoutOrder = 1000,
+		TextColor3 = Theme.textDim,
+		Size = UDim2.new(1, -10, 0, 44),
+		Parent = list,
+	})
+	Ui.textLimit(20).Parent = notice
+	return p
+end
+
+local function openPods()
+	local p = podPanel
+	if p == nil or not Ui.boolAttr(Attr.DataLoaded) then
+		return
+	end
+	p.root.Visible = true
+	refreshPods()
+end
+
 function ShopController:Init() end
 
 function ShopController:Start()
@@ -202,19 +343,33 @@ function ShopController:Start()
 		onBuy(buyTool)
 	end)
 
+	local pods = buildPods(Remotes.getEvent("BuyPod"))
+	podPanel = pods
+
+	-- One panel at a time: opening any other panel closes these two.
 	UiEvents.OpenPanel:Connect(function(name: string)
 		if name == "Tools" then
+			pods.root.Visible = false
 			open()
+		elseif name == "Pods" then
+			p.root.Visible = false
+			openPods()
+		else
+			p.root.Visible = false
+			pods.root.Visible = false
 		end
 	end)
 	ProximityPromptService.PromptTriggered:Connect(function(prompt: ProximityPrompt, who: Player)
 		if who == player and GameData.isShopPrompt(prompt, "Tools") then
-			open()
+			UiEvents.fireOpenPanel("Tools") -- closes other panels, then opens this one
 		end
 	end)
 
 	for _, name in { Attr.ToolIndex, Attr.Coins, Attr.World2Unlocked } do
 		player:GetAttributeChangedSignal(name):Connect(refresh)
+	end
+	for _, name in { Attr.PodsMask, Attr.Coins, Attr.CurrentPod } do
+		player:GetAttributeChangedSignal(name):Connect(refreshPods)
 	end
 end
 
