@@ -1,18 +1,25 @@
 --!strict
 -- Single source of truth for every RemoteEvent / RemoteFunction.
--- Owned by integration-programmer. Must match docs/architecture.md "Remotes" table exactly.
--- Server: call Remotes.setup() once at startup. Client/server: Remotes.get(name).
+-- Owned by integration-programmer. Must match docs/architecture.md section 2 "Remotes" exactly.
+-- Server: call Remotes.setup() once at startup (the bootstrap does this). Client/server: Remotes.getEvent(name).
+-- Payload types live in Contracts/Types.luau.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Remotes = {}
 
-export type RemoteName = string
+export type RemoteName = "RequestRebirth" | "ClaimDailyReward" | "SetDonorPrivacy" | "Notify" | "PlayEffect"
 
 -- name -> "Event" | "Function"
 Remotes.Definitions = {
-	-- e.g. RequestPurchaseUpgrade = "Event",
+	-- Client -> Server
+	RequestRebirth = "Event", -- (no args). Handler: Gameplay/RebirthService
+	ClaimDailyReward = "Event", -- (no args). Handler: Gameplay/DailyRewardService
+	SetDonorPrivacy = "Event", -- (hidden: boolean). Handler: Data/DataService
+	-- Server -> Client
+	Notify = "Event", -- (payload: Types.NotifyPayload). Handler: client UI/NotificationController
+	PlayEffect = "Event", -- (effect: Types.EffectId, payload: Types.EffectPayload). Handler: client Effects/EffectsController
 } :: { [RemoteName]: "Event" | "Function" }
 
 local FOLDER_NAME = "Remotes"
@@ -38,6 +45,18 @@ function Remotes.get(name: RemoteName): Instance
 	local remote = folder:WaitForChild(name, 10)
 	assert(remote, `Remote "{name}" not created`)
 	return remote
+end
+
+function Remotes.getEvent(name: RemoteName): RemoteEvent
+	local remote = Remotes.get(name)
+	assert(remote:IsA("RemoteEvent"), `Remote "{name}" is not a RemoteEvent`)
+	return remote :: RemoteEvent
+end
+
+function Remotes.getFunction(name: RemoteName): RemoteFunction
+	local remote = Remotes.get(name)
+	assert(remote:IsA("RemoteFunction"), `Remote "{name}" is not a RemoteFunction`)
+	return remote :: RemoteFunction
 end
 
 return Remotes
