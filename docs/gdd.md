@@ -164,7 +164,7 @@ No other EconomyConfig value changes. Tools, pods, bosses, rebirth cost (`REBIRT
 
 **For qa (qa-owned files, listed here so nothing gets missed):** in `tests/sim/timing_sim.py`, set `GDD_TIMES` to the 4.7 times above. Change the "12:00-14:00" target to (630, 720) s for 10:30-12:00. Regenerate `tests/shared/Fixtures/GddTables.luau` with `--luau-fixture`, because the Rank 2 value changed. Then rerun the sim and confirm the rev 2 Rank 2 times.
 
-## 5. Eggs and pets (rev 1)
+## 5. Eggs and pets (rev 1) (rev 3: Galaxy Egg moved to World 1, see 5.1 and 5.2)
 - **Equip slots:** 3 at start, +1 at Rebirth 3, +1 at Rebirth 8 (5 free max), +1 with VIP (6). **Inventory cap:** 60 pets, plus a free-player "auto-delete Commons" toggle and multi-delete. Pets follow the player (simple float, no pathfinding).
 - Hatching: 1 at a time. Hatch x3 unlocks at Rebirth 2 (free). The hatch animation is about 2 s and can be skipped.
 - **Odds are shown on the egg's UI before every purchase** (coin or Robux), as exact percentages, plus pet bonuses and "you own" ticks. Pets give MP bonus only (see 4.1).
@@ -206,17 +206,56 @@ No other EconomyConfig value changes. Tools, pods, bosses, rebirth cost (`REBIRT
 | | Hologram Tiger | Rare | +2.50 | 15% |
 | | Prism Whale | Epic | +4.00 | 4.5% |
 | | Crowned Griffin | Legendary | +8.00 | 0.5% |
-| **Galaxy Egg** (W2, Robux, PROPOSED 49 R$ / 3 for 129 R$) | Nebula Fox | Rare | +3.00 | 60% |
+| **Galaxy Egg** (**W1 (rev 3)**, stand next to the Star Egg; Robux, 49 R$ / 3 for 129 R$, approved D-038, unchanged by D-057) | Nebula Fox | Rare | +3.00 | 60% |
 | | Comet Wolf | Epic | +5.00 | 30% |
 | | Supernova Dragon | Legendary | +9.00 | 9% |
 | | Galaxy Kraken | Mythic | +20.00 | 1% |
 Each egg sums to 100%.
 
 **Free-player rule (keeps Robux eggs from making free players irrelevant):**
-1. Each world's best free pet beats that world's most common Robux pet (Golden Glow Cat +3.0 > Starlight Corgi +1.0; Crowned Griffin +8.0 > Nebula Fox +3.0).
+1. Each world's best free pet beats that world's most common Robux pet (Golden Glow Cat +3.0 > Starlight Corgi +1.0; Crowned Griffin +8.0 > Nebula Fox +3.0). **(rev 3)** With the Galaxy Egg in World 1, Golden Glow Cat (+3.00) only **ties** Nebula Fox (+3.00) there. See 5.1 for the check and the optional fix (needs owner approval).
 2. PetMult is capped at x25. A typical free team at R10 is x8-12, so paid pets are worth at most ~2-3x free pets, never 10x.
 3. Boss thresholds and rebirth costs are tuned to the **zero-Robux** curve (4.7). Paying only goes faster.
 4. Pets, the paid tier and VIP have **zero effect in duels** (section 6).
+
+### 5.1 Rev 3: Galaxy Egg moves to World 1 (D-057, resolves lawyer L-14 / D-056 #1)
+**What changes:** the Galaxy Egg stand sits in Glow Town, next to the Star Egg stand, so its odds UI (odds, pity rule, pity counter, true next-hatch odds, restricted fallback text) is visible before any purchase. Prices (49 / 129 R$), odds (60 / 30 / 9 / 1%), pity at 10 (saved per egg, 90% Legendary / 10% Mythic) and the restricted fallback (Nebula Fox, x3 for the 3-pack) are **unchanged**. Galaxy pet bonuses are **unchanged**. The egg stays Robux-only and is still never in a bundle (5, 8g).
+
+**Free-player check in World 1 (World 2 is not reachable in the lean v1):**
+| Check | Before rev 3 (Star Egg only in W1) | Rev 3 (Star + Galaxy in W1) | Verdict |
+|---|---|---|---|
+| Free W1 pet ceiling (Golden Glow Cat +3.00, 0.5% in the 10,000-coin Shiny Egg) | x10 (3 slots), x13 (R3, 4 slots), x16 (R8, 5 slots); a typical free team (Sparkle Owl, Disco Duck, Gel Penguin) is about x3-5 by R3 | same | unchanged |
+| Highest PetMult a payer can reach in W1 | x25 cap (already reachable: 3 Cosmic Unicorns = 1 + 24) | x25 cap | **unchanged**: the cap binds, and the M clamp stays 10,000 |
+| Rough cost to reach the x25 cap (3 slots; about 6.5 hatches per Legendary+ with pity, 10% of them Mythic) | about 4,500 R$ (3 Unicorns, about 65 Star hatches each at 23 R$ in 3-packs) | about 560-860 R$ (2-3 Supernova Dragons = 13-20 Galaxy hatches at 43 R$) | cheaper, but still above the full ladder (4+8+19+39+79 = 149 R$ for x32), which stays the bigger lever |
+| One Galaxy 3-pack (129 R$), typical roll | n.a. | 2 Nebula Fox + 1 Comet Wolf = x12 | about 3x a typical free R3 team, inside the 2-3x target only at the low end |
+| Most common Robux pet vs best free pet (rule 1) | Starlight Corgi +1.00 < Golden Glow Cat +3.00 | Nebula Fox +3.00 = Golden Glow Cat +3.00 | **tie**: optional fix below |
+| W1 coin income | fixed per boss; ceiling Aura Titan 1,000 coins/s x (1 + 0.1R) | same | **unchanged**: pets never touch coins (4.1) |
+| Duels | pets ignored | pets ignored | unchanged |
+
+**Why free play stays worth it in World 1:**
+1. **Bosses are thresholds, coins are fixed.** Galaxy pets let a payer reach Aura Titan sooner in each life, but once anyone beats Aura Titan, coins per second are the same for everyone. A free player reaches that point from about R3-R4 (Halo Lamp 1,500 MP/s x RebirthMult 2.5 x PetMult about 4 = about 15,000 MP/s, so 400K MP takes about 27 s). From then on, W1 progress (rebirth costs 1.2M, 3.6M, ...) is coin-bound and equal for payers and free players.
+2. **The payer ceiling does not move.** x25 was already reachable in W1. Galaxy only makes it cheaper, and the ladder already makes early bosses fast for payers. So Galaxy does not create a new "trivial" tier; it moves payers into one that already existed.
+3. **The Rebirths board and the Duel board stay fair.** Rebirths are coin-bound (same coin ceiling), and duels ignore pets. Only the Lifetime MP board favours payers, which the ladder already did.
+4. **Update 1 restores rule 1 for World 2 as designed:** Neon and Runway free pets (Crowned Griffin +8.00) beat Nebula Fox again there.
+
+**Optional fix for the rule-1 tie (NOT applied; needs owner approval, gate 5):** raise the **free** Golden Glow Cat from +3.00 to **+3.20**. It changes no odds, no price and no paid pet. Free W1 ceiling becomes x10.6 / x13.8 / x17. Shipping today without it is acceptable: a tie is not a loss, and points 1-3 above hold either way. See section 15, Q11.
+
+### 5.2 Rev 3 changes (for gameplay-programmer, world-programmer, builder, qa)
+| # | Owner | File / place | Field | Rev 2 | Rev 3 | Apply |
+|---|---|---|---|---|---|---|
+| 1 | gameplay-programmer | `src/shared/Gameplay/EconomyConfig.luau` | `EGGS.GalaxyEgg.world` | 2 | **1** | now (D-057 approved) |
+| 2 | gameplay-programmer | same | comment above `NebulaFox` ("Galaxy Egg (W2, Robux; ...)") and the header line 6-7 | W2 | W1 (rev 3, D-057) | now (comment only) |
+| 3 | gameplay-programmer | same | `EGG_IDS` order | Basic, Shiny, Star, Galaxy | unchanged (Galaxy already lists right after Star) | no change |
+| 4 | gameplay-programmer | same | `GalaxyEgg.pets` weights, `pityAt`, `restrictedGrant`, Galaxy pet `bonus` values | 6000/3000/900/100, 10, NebulaFox, 3/5/9/20 | **unchanged** | no change |
+| 5 | gameplay-programmer | same | `PETS.GoldenGlowCat.bonus` | 3.00 | 3.20 | **only after owner approval (Q11, gate 5)** |
+| 6 | world-programmer | `src/shared/World/MapLayout.luau` | `WORLDS[1]` egg stands | Basic (-30,0,-15), Shiny (-50,0,-15), Star (-70,0,-15) | add **`GalaxyEgg = Vector3.new(-90, 0, -15)`** (20 studs past the Star stand, same row as the others) | now |
+| 7 | world-programmer | same | `WORLDS[2]` egg stands | Neon, Runway, Galaxy | remove `GalaxyEgg` (it lives in W1) | now |
+| 8 | world-programmer | same | `W1_EGG_IDS` and the builder header (lines 30-32) | `{ "BasicEgg", "ShinyEgg" }` | `{ "BasicEgg", "ShinyEgg", "StarEgg", "GalaxyEgg" }`; header lists all 4 W1 stands | now |
+| 9 | builder | Glow Town (Studio place) | new `EggStand` | none | Part or Model named **`GalaxyEggStand`**, tag `EggStand`, attributes `EggId = "GalaxyEgg"`, `WorldId = 1`, one ProximityPrompt that opens the egg UI (never a purchase prompt, 8b), at about (-90, 0, -15), next to the Star Egg stand, not on the spawn-to-Sid path. Galaxy-themed look of our own (no third-party IP); log any asset in `docs/asset-briefs/asset-log.md` | now; owner saves the place |
+| 10 | integration-programmer | `docs/architecture.md` (EGGS comment, about line 288) | GalaxyEgg world | "GalaxyEgg (Robux, W2)" | "GalaxyEgg (Robux, W1, rev 3)" | now (doc only) |
+| 11 | qa | `tests/shared/Fixtures/GddTables.luau` | Galaxy Egg world | 2 | 1 (regenerate with `--luau-fixture`) | now; plus a check that `isNearEggStand` accepts the Galaxy stand in W1 and the odds UI opens from it |
+
+No other EconomyConfig, ProductCatalog or MapLayout value changes. Server rules are untouched: Robux eggs still sell only through `RequestPurchase`, and `isNearEggStand` already requires egg world == player world, so row 1 makes the W1 stand valid.
 
 ## 6. PvP mog battles (opt-in duels)
 - **Start:** tap a player -> "Challenge to a Mog-Off". The target sees Accept/Decline (auto-decline after 10 s). Settings has "Duel requests: On / Off" (default **On only after the tutorial quest chain ends**, ~4 min; before that the player cannot send or receive challenges). Both players are teleported to one of 2 Mog Rings in each world's hub.
@@ -326,7 +365,7 @@ Total: **23 products** (v1 had 34).
 | 4 | Buffer: balance from qa sim, exploit tests, purchase-flow tests (**incl. the coin-firewall test from 8g and restricted-player receipts, rev 1**), owner playtest fixes |
 Rev 1 scope check: 11 fewer products to wire and test (coin packs, pod unlocks, skips, Auto-Mog Early, Coin Snack) roughly offsets the added pity, policy and fallback work. Net scope is about the same.
 
-Builder: Glow Town hub + boss stage row + pod row + 2 Mog Rings + egg stands; Neon Runway World 2; 13 boss models, 30 pet models (+3 fixed pets: Sparkle Pup, Ring Light Retriever and Neon Pup, made as recolours plus an accessory on existing pet models), 12 look sets, 2 exclusive fits, Crew Cap, VIP Sparkle Aura (own or free-licensed, logged).
+Builder: Glow Town hub + boss stage row + pod row + 2 Mog Rings + egg stands (**rev 3: 4 in Glow Town: Basic, Shiny, Star and Galaxy, the Galaxy stand next to the Star stand; see 5.2**); Neon Runway World 2; 13 boss models, 30 pet models (+3 fixed pets: Sparkle Pup, Ring Light Retriever and Neon Pup, made as recolours plus an accessory on existing pet models), 12 look sets, 2 exclusive fits, Crew Cap, VIP Sparkle Aura (own or free-licensed, logged).
 
 **Not in v1:** any Robux-for-coins product (coin packs, paid Coin Snack, pod early unlocks, Skip Rebirth, Skip to World 2, Auto-Mog Early; rev 1); trading; pet fusing/golden/shiny variants; ranked ELO; a second prestige (Ascend); Worlds 3-4; co-op bosses and squads (D-013 option C); runway slot choice (D-013 option A); live "admin abuse" events run by a person; MP packs; teleport-to-stage products; premium x99/x999 pods; Mogger mega pack; potions inventory; pet enchants; friend-referral rewards; Discord links; quests beyond the tutorial chain; pets with abilities.
 
@@ -361,3 +400,4 @@ Rev 1 rules for every update: event coin boosts are free and server-wide, and ne
 8. **Group reward:** the cosmetic Crew Cap (allowed as RISK, subject to your pre-launch read of Community Standards), or no reward?
 9. **Kids/Select:** pay the refundable fee (Robux, gate 3) or rely on a Plus/Premium membership held for 2+ months? When can you complete the creator age check and 2SV?
 10. **Rank names:** keep "Star Mogger"/"Supreme Mogger", or switch now to "Star Icon"/"Supreme Icon", which the lawyer called safer for Select review?
+11. **(rev 3) Golden Glow Cat +3.00 -> +3.20? Needs owner approval (gate 5).** With the Galaxy Egg in World 1 (D-057), the best free W1 pet only ties the most common Galaxy pet (Nebula Fox +3.00). Raising the free Golden Glow Cat to +3.20 restores "best free pet beats the most common Robux pet" with no change to odds, prices or any paid pet. Default if you say nothing: keep +3.00 (safe to ship; see 5.1). Galaxy odds, pity, fallback and prices are unchanged in rev 3.
