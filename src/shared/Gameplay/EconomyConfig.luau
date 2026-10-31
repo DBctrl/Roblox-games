@@ -1,6 +1,6 @@
 --!strict
 -- The one balance file for "Aura Up!" v1. Owned by gameplay-programmer.
--- Every number from GDD rev 1 sections 4-7 lives here (docs/gdd.md). Server and client read the same file, so
+-- Every number from GDD rev 2 sections 4-7 lives here (docs/gdd.md). Server and client read the same file, so
 -- what the UI shows is what the server uses. Pure data and pure functions only: no Roblox services, no state.
 -- qa checks these tables against the GDD (T-024). Change numbers here only; never hard-code them elsewhere.
 -- Prices of Robux products are NOT here (Contracts/ProductCatalog, owner gate 5). Eggs and pets: T-027 (sprint 2).
@@ -155,7 +155,7 @@ local bosses: { Boss } = {
 -- Rank ladder (GDD 7; lifetime MP, never resets) ---------------------------------------------------------
 local ranks: { Rank } = {
 	{ name = "Fresh Spawn", lifetimeMp = 0, lookId = "FreshSpawn" },
-	{ name = "Comb Rookie", lifetimeMp = 2500, lookId = "CombRookie" },
+	{ name = "Comb Rookie", lifetimeMp = 1800, lookId = "CombRookie" }, -- GDD rev 2 (D-033, QA-10): was 2,500
 	{ name = "Glow Starter", lifetimeMp = 15000, lookId = "GlowStarter" },
 	{ name = "Drip Apprentice", lifetimeMp = 60000, lookId = "DripApprentice" },
 	{ name = "Style Scout", lifetimeMp = 250000, lookId = "StyleScout" },
