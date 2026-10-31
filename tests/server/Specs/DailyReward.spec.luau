@@ -5,11 +5,17 @@
 -- since epoch) and GDD 10; not against code.
 --
 -- Two layers, each SKIPs on its own:
---   1. pure, Run mode (F8): `Gameplay/Util/DailyCalendar` (QA-F13 asks for it)
---        claim(daily: { streak: number, lastClaimDay: number }, nowUnix: number)
---            -> (ok: boolean, next: { streak: number, lastClaimDay: number }?)
---        reward(day: number (1..7), bestCoinsPerSec: number, vip: boolean) -> { coins: number, hypeSec: number, ... }
---   2. live, Play (F5): RewardService.claimDaily(player) -> (boolean, string?) (the ClaimDailyReward path, QA-F13)
+--   1. pure, Run mode (F8): `Gameplay/Util/DailyMath` (merged name, D-069 / QA-F13), through local adapters that
+--      keep the tests' original shape:
+--        claim(daily: { streak, lastClaimDay }, nowUnix) -> (ok, next: { streak, lastClaimDay }?)
+--            = DailyMath.claim(daily.lastClaimDay, daily.streak, DailyMath.utcDay(nowUnix)) -> (ok, newStreak)
+--        reward(day 1..7, bestCoinsPerSec, vip) -> { coins, hypeSec, coinSec, eggHatch }
+--            = EconomyConfig.DAILY_REWARDS[day] (+ DAILY_VIP_HYPE_SEC when vip), the same rows RewardService.claim
+--              pays from (RewardService has no pure reward function).
+--      `nowUnix` is always the server's os.time() (RewardService.today()), so a non-number `now` is not reachable;
+--      the claim adapter refuses a non-number or non-finite (NaN, inf) `now` instead of passing it on; every finite
+--      junk time and every corrupt saved day still goes to DailyMath.
+--   2. live, Play (F5): RewardService.claim(player) -> (boolean, string?) (the ClaimDailyReward path, D-069)
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
@@ -27,15 +33,29 @@ end
 
 return function(t: TestKit.Suite)
 	local Server = ServerScriptService:FindFirstChild("Server")
-	local DailyCalendar = TestKit.tryRequire(Server, { "Gameplay", "Util", "DailyCalendar" }) :: any
+	local Shared = ReplicatedStorage:FindFirstChild("Shared")
+	local DailyMath = TestKit.tryRequire(Server, { "Gameplay", "Util", "DailyMath" }) :: any
+	local EconomyConfig = TestKit.tryRequire(Shared, { "Gameplay", "EconomyConfig" }) :: any
 	local RewardService = TestKit.tryRequire(Server, { "Gameplay", "RewardService" }) :: any
 	local DataService = TestKit.tryRequire(Server, { "Data", "DataService" }) :: any
 
-	local claimFn = TestKit.firstFn(DailyCalendar, { "claim", "tryClaim" })
-	if claimFn == nil then
-		t.skip("daily calendar rules", "Gameplay/Util/DailyCalendar.claim missing (QA-F13)")
+	local mathClaim = TestKit.firstFn(DailyMath, { "claim" })
+	local utcDay = TestKit.firstFn(DailyMath, { "utcDay" })
+	if mathClaim == nil or utcDay == nil then
+		t.skip("daily calendar rules", "Gameplay/Util/DailyMath.claim / utcDay missing (D-069)")
 	else
-		local claim: (any, number) -> (boolean, any) = claimFn
+		-- Adapter: DailyMath.claim(lastClaimDay, streak, today) -> (ok, newStreak).
+		local function claim(d: any, nowUnix: any): (boolean, any)
+			if type(nowUnix) ~= "number" or nowUnix ~= nowUnix or math.abs(nowUnix) == math.huge then
+				return false, nil -- not reachable: `now` is os.time()
+			end
+			local today = utcDay(nowUnix)
+			local ok, streak = mathClaim(d.lastClaimDay, d.streak, today)
+			if not ok then
+				return false, nil
+			end
+			return true, { streak = streak, lastClaimDay = today }
+		end
 		local function daily(streak: number, last: number)
 			return { streak = streak, lastClaimDay = last }
 		end
@@ -108,11 +128,21 @@ return function(t: TestKit.Suite)
 		end)
 	end
 
-	local rewardFn = TestKit.firstFn(DailyCalendar, { "reward", "rewardFor" })
-	if rewardFn == nil then
-		t.skip("daily reward table", "Gameplay/Util/DailyCalendar.reward missing (QA-F13)")
+	local rows = EconomyConfig and EconomyConfig.DAILY_REWARDS
+	if type(rows) ~= "table" or type(EconomyConfig.DAILY_VIP_HYPE_SEC) ~= "number" then
+		t.skip("daily reward table", "EconomyConfig.DAILY_REWARDS / DAILY_VIP_HYPE_SEC missing")
 	else
-		local reward: (number, number, boolean) -> any = rewardFn
+		-- Adapter: the payout RewardService.claim computes from one DAILY_REWARDS row.
+		local function reward(day: number, bestCoinsPerSec: number, vip: boolean): any
+			local row = rows[day]
+			local hype = (row.hypeSec or 0) + (if vip then EconomyConfig.DAILY_VIP_HYPE_SEC else 0)
+			return {
+				coins = if row.coinSec then math.floor(row.coinSec * bestCoinsPerSec) else 0,
+				hypeSec = hype,
+				coinSec = row.coinSnackSec or 0,
+				eggHatch = row.freeHatch == true,
+			}
+		end
 		t.test(
 			"VIP adds only 10 min Hype Snack; coin and egg rewards are the same (GDD 10, legal RC-1 c)",
 			function()
@@ -140,9 +170,9 @@ return function(t: TestKit.Suite)
 		t.skip("live daily claim", "RewardService (T-052) not merged")
 		return
 	end
-	local claimDaily = TestKit.firstFn(RewardService, { "claimDaily", "tryClaimDaily" })
+	local claimDaily = TestKit.firstFn(RewardService, { "claim" })
 	if claimDaily == nil then
-		t.skip("live daily claim", "RewardService.claimDaily seam missing (QA-F13)")
+		t.skip("live daily claim", "RewardService.claim seam missing (D-069)")
 		return
 	end
 	local players = TestKit.loadedPlayers(1)

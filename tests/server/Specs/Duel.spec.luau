@@ -5,10 +5,15 @@
 --
 -- Three layers, each SKIPs on its own:
 --   1. pure, Run mode (F8): `EconomyConfig.duelScore` (named in 4c) and the duel constants
---   2. pure, Run mode: `Gameplay/Util/DuelRules` (QA-F13 asks for it)
---        rewardAllowed(rewardLog: { { t: number, opp: number } }, now: number, oppUserId: number): boolean
---        acceptTaps(count: any, now: number, lastAccepted: number, activeStart: number, activeEnd: number,
---                   total: number): number   -- taps accepted from one TapBatch
+--   2. pure, Run mode: `Gameplay/Util/DuelMath` (merged name, D-069 / QA-F13), through local adapters that keep
+--      the tests' original shape:
+--        rewardAllowed(rewardLog, now, oppUserId): boolean
+--            = DuelMath.rewardAllowed(DuelMath.pruneRewardLog(rewardLog, now), now, oppUserId), the exact pair
+--              DuelService.payWinner runs
+--        acceptTaps(count, now, lastAccepted, activeStart, activeEnd, total): number
+--            = DuelMath.acceptTaps({ taps = total, clock = lastAccepted }, count, now, activeStart, activeEnd)
+--              (a fresh TapState per call; DuelMath advances `clock` by the time the taps used, so the
+--              adapter's "last = now" is the stricter of the two)
 --   3. live, Play (F5): DuelService.challenge(player, targetUserId) / respond(player, challengerUserId, accept) /
 --      rematch(player, accept) -> (boolean, string?) (QA-F13). Self-duel and bad ids need 1 player; spam and
 --      cooldown need 2 (Test > Clients and Servers, 2 players, both past the tutorial).
@@ -29,7 +34,7 @@ return function(t: TestKit.Suite)
 	local Server = ServerScriptService:FindFirstChild("Server")
 	local Shared = ReplicatedStorage:FindFirstChild("Shared")
 	local EconomyConfig = TestKit.tryRequire(Shared, { "Gameplay", "EconomyConfig" }) :: any
-	local DuelRules = TestKit.tryRequire(Server, { "Gameplay", "Util", "DuelRules" }) :: any
+	local DuelMath = TestKit.tryRequire(Server, { "Gameplay", "Util", "DuelMath" }) :: any
 	local DuelService = TestKit.tryRequire(Server, { "Gameplay", "DuelService" }) :: any
 
 	-- 1. Score and constants ---------------------------------------------------------------------------------
@@ -90,11 +95,18 @@ return function(t: TestKit.Suite)
 	end
 
 	-- 2. Pure rules ------------------------------------------------------------------------------------------
-	local rewardAllowed = TestKit.firstFn(DuelRules, { "rewardAllowed", "canReward" })
-	if rewardAllowed == nil then
-		t.skip("duel reward cap tests", "Gameplay/Util/DuelRules.rewardAllowed missing (QA-F13)")
+	local mathAllowed = TestKit.firstFn(DuelMath, { "rewardAllowed" })
+	local prune = TestKit.firstFn(DuelMath, { "pruneRewardLog" })
+	if mathAllowed == nil or prune == nil then
+		t.skip(
+			"duel reward cap tests",
+			"Gameplay/Util/DuelMath.rewardAllowed / pruneRewardLog missing (D-069)"
+		)
 	else
-		local allowed: (any, number, number) -> boolean = rewardAllowed
+		-- Adapter: prune, then check, as DuelService.payWinner does.
+		local function allowed(rewardLog: any, nowUnix: number, opp: number): boolean
+			return mathAllowed(prune(rewardLog, nowUnix), nowUnix, opp)
+		end
 		local now = 1_800_000_000
 		local function log(entries: { { number } }): { { t: number, opp: number } }
 			local out = {}
@@ -178,11 +190,21 @@ return function(t: TestKit.Suite)
 		end)
 	end
 
-	local acceptTaps = TestKit.firstFn(DuelRules, { "acceptTaps", "clampTaps" })
-	if acceptTaps == nil then
-		t.skip("duel tap-flood tests", "Gameplay/Util/DuelRules.acceptTaps missing (QA-F13)")
+	local mathAccept = TestKit.firstFn(DuelMath, { "acceptTaps" })
+	if mathAccept == nil then
+		t.skip("duel tap-flood tests", "Gameplay/Util/DuelMath.acceptTaps missing (D-069)")
 	else
-		local accept: (any, number, number, number, number, number) -> number = acceptTaps
+		-- Adapter: DuelMath.acceptTaps(state: { taps, clock }, count, now, activeStart, activeEnd) -> number.
+		local function accept(
+			count: any,
+			tNow: number,
+			last: number,
+			aStart: number,
+			aEnd: number,
+			total: number
+		)
+			return mathAccept({ taps = total, clock = last }, count, tNow, aStart, aEnd)
+		end
 		local s, e = 100, 108
 		t.test("tap flood: one huge batch is clamped to 10/s x elapsed", function()
 			t.ok(accept(1e9, s + 0.5, s, s, e, 0) <= 5, "0.5 s after the start")
