@@ -21,6 +21,17 @@ export type Boss = { id: string, name: string, worldId: number, need: number, co
 export type Tool = { index: number, name: string, power: number, cost: number, worldId: number }
 export type Rank = { index: number, name: string, need: number }
 export type Pod = { index: number, name: string, mpPerSec: number, cost: number, worldId: number }
+export type EggPet = { petId: string, weight: number }
+export type Egg = {
+	id: string,
+	name: string,
+	worldId: number,
+	currency: string, -- "Coins" | "Robux"
+	price: number,
+	pets: { EggPet }, -- same table, same order the server rolls (architecture 4b)
+	oddsValid: boolean, -- weights are whole, positive and sum to ODDS_TOTAL
+}
+export type Pet = { id: string, name: string, rarity: string, bonus: number }
 
 local GameData = {}
 
@@ -251,6 +262,68 @@ function GameData.petSlotRebirths(): { number }
 	return out
 end
 
+local DEFAULT_ODDS_TOTAL = 10000
+local DEFAULT_INVENTORY_CAP = 60
+
+function GameData.oddsTotal(): number
+	ensure()
+	return num(economy and economy.ODDS_TOTAL, DEFAULT_ODDS_TOTAL)
+end
+
+function GameData.inventoryCap(): number
+	ensure()
+	return num(economy and economy.INVENTORY_CAP, DEFAULT_INVENTORY_CAP)
+end
+
+-- Egg `eggId` from EconomyConfig.EGGS (T-027), read as-is: the UI shows exactly the weights the server rolls.
+function GameData.egg(eggId: string): Egg?
+	ensure()
+	local source = economy and economy.EGGS
+	local entry = if type(source) == "table" then source[eggId] else nil
+	if type(entry) ~= "table" or type(entry.pets) ~= "table" then
+		return nil
+	end
+	local pets: { EggPet } = {}
+	local sum = 0
+	local valid = true
+	for _, row in ipairs(entry.pets) do
+		if type(row) == "table" and type(row.petId) == "string" and type(row.weight) == "number" then
+			table.insert(pets, { petId = row.petId, weight = row.weight })
+			sum += row.weight
+			if row.weight <= 0 or row.weight % 1 ~= 0 then
+				valid = false
+			end
+		else
+			valid = false
+		end
+	end
+	return {
+		id = eggId,
+		name = tostring(pick(entry, { "name" }) or eggId),
+		worldId = num(pick(entry, { "world", "worldId" }), 1),
+		currency = tostring(pick(entry, { "currency" }) or "Coins"),
+		price = num(pick(entry, { "price" }), 0),
+		pets = pets,
+		oddsValid = valid and #pets > 0 and sum == GameData.oddsTotal(),
+	}
+end
+
+-- Pet `petId` from EconomyConfig.PETS; nil if unknown.
+function GameData.pet(petId: string): Pet?
+	ensure()
+	local source = economy and economy.PETS
+	local entry = if type(source) == "table" then source[petId] else nil
+	if type(entry) ~= "table" then
+		return nil
+	end
+	return {
+		id = petId,
+		name = tostring(pick(entry, { "name" }) or petId),
+		rarity = tostring(pick(entry, { "rarity" }) or "Common"),
+		bonus = num(pick(entry, { "bonus" }), 0),
+	}
+end
+
 function GameData.tapCapPerSec(): number
 	ensure()
 	return num(economy and economy.TAP_CAP_PER_SEC, DEFAULT_TAP_CAP)
@@ -321,6 +394,38 @@ function GameData.isShopPrompt(prompt: ProximityPrompt, kind: string): boolean
 		node = node.Parent
 	end
 	return false
+end
+
+-- The EggId of the EggStand that holds `prompt` (walks ancestors with MapLayout.getEggIdOf, 1f), or nil.
+function GameData.eggIdOfPrompt(prompt: ProximityPrompt): string?
+	ensure()
+	local fn = mapLayout and mapLayout.getEggIdOf
+	if type(fn) ~= "function" then
+		return nil
+	end
+	local node: Instance? = prompt.Parent
+	while node ~= nil and node ~= workspace do
+		local ok, eggId = pcall(fn, node)
+		if ok and type(eggId) == "string" then
+			return eggId
+		end
+		node = node.Parent
+	end
+	return nil
+end
+
+-- Egg stand position (the streamed-in stand, else MapLayout's layout fallback), or nil.
+function GameData.eggStandPosition(eggId: string): Vector3?
+	ensure()
+	local fn = mapLayout and mapLayout.getEggStandPosition
+	if type(fn) ~= "function" then
+		return nil
+	end
+	local ok, pos = pcall(fn, eggId)
+	if ok and typeof(pos) == "Vector3" then
+		return pos
+	end
+	return nil
 end
 
 return table.freeze(GameData)

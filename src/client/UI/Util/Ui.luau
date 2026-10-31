@@ -26,6 +26,20 @@ Ui.Theme = table.freeze({
 	meterBack = Color3.fromRGB(28, 24, 52),
 })
 
+local RARITY_COLORS: { [string]: Color3 } = {
+	Common = Color3.fromRGB(190, 190, 200),
+	Uncommon = Color3.fromRGB(110, 220, 120),
+	Rare = Color3.fromRGB(90, 160, 255),
+	Epic = Color3.fromRGB(190, 110, 255),
+	Legendary = Color3.fromRGB(255, 190, 50),
+	Mythic = Color3.fromRGB(255, 90, 140),
+}
+
+-- Colour for a pet rarity name (Types.Rarity); unknown names get the Common grey.
+function Ui.rarityColor(rarity: string): Color3
+	return RARITY_COLORS[rarity] or RARITY_COLORS.Common
+end
+
 -- Creates an instance, applies `props` (Parent last), and parents `children` to it.
 function Ui.new(className: string, props: { [string]: any }?, children: { Instance }?): any
 	local instance = Instance.new(className) :: any
