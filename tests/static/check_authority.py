@@ -6,9 +6,10 @@ Owned by qa. Pure standard library, no Studio needed. Run from the repo (or work
     python3 -I tests/static/check_authority.py            # checks src/
     python3 -I tests/static/check_authority.py --strict   # PENDING (PetService not written yet) also fails
     python3 -I tests/static/check_authority.py --selftest # runs on tests/static/selftest/authority
-      expected: "2 fail, 0 pending". BadEggController FAILs with 5 problems (roll fn, random next to weights,
+      expected: "3 fail, 0 pending". BadEggController FAILs with 5 problems (roll fn, random next to weights,
       SetAttribute Coins, leaderstats write, FireServer with an amount); PetService FAILs once (setEquipped calls
-      removeFromEquipped with no refresh). GoodEggController and PetService.deletePets (refresh via a helper) pass.
+      removeFromEquipped with no refresh); BadRollAssign FAILs once (`Egg.rollPet = function`). GoodEggController
+      (incl. `Ui.scrollList` and `enroll`, which only contain "roll") and PetService.deletePets pass.
 
 Heuristic, file-level review aid (not a proof). A FAIL is a lead for qa to confirm, then file in docs/qa/bugs.md.
 Checks (architecture 0, 4b; CR-c / QA-5):
@@ -34,7 +35,13 @@ TYPES = os.path.join(ROOT, "src", "shared", "Contracts", "Types.luau")
 
 RANDOM = re.compile(r"math\.random\s*\(|Random\.new\s*\(|:\s*NextInteger\s*\(|:\s*NextNumber\s*\(")
 ODDS = re.compile(r"\.weight\b|ODDS_TOTAL|EGGS\s*\[|\.pets\b")
-ROLL_FN = re.compile(r"^\s*(?:local\s+)?function\s+[\w.:]*(?:[Rr]oll\w*|[Pp]ickPet\w*|[Hh]atchRoll\w*)\s*\(", re.M)
+# The roll word must start the function/identifier name (after any `Mod.` / `Mod:` prefix), so
+# `Ui.scrollList` or `enroll` do not match but `rollEgg`, `Pets.rollPet`, `M:Roll` and `local rollPet = function` do.
+_ROLL_NAME = r"(?:\w+[.:])*(?:[Rr]oll|[Pp]ickPet|[Hh]atchRoll)\w*"
+ROLL_FN = re.compile(
+    rf"^\s*(?:local\s+)?function\s+{_ROLL_NAME}\s*\(|^\s*(?:local\s+)?{_ROLL_NAME}\s*=\s*function\s*\(",
+    re.M,
+)
 WINDOW = 6
 
 SET_ATTR = re.compile(r":\s*SetAttribute\s*\(\s*(?:\"(\w+)\"|[\w.]*Attr\w*\.(\w+))")

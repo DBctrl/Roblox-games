@@ -82,12 +82,6 @@ named role. Line numbers are for `main` at `dde2064` (build 1)._
   Studio spec "RANKS match GDD 7" fails until it changes.
 - **Fix hint:** change the one value; `EconomyConfig.validate()` still passes (ranks stay ascending). Planned as T-088 (D-035).
 
-### QA-F6 [gdd] 3 taps/s first-rebirth band starts 2 s after the GDD's own time   S3
-- **Found by:** qa (D-033 rerun, `python3 -I tests/sim/timing_sim.py`).
-- **Expected:** GDD 4.7 rev 2 band "12:30-15:00 at 3 taps/s" contains the table's 3 taps/s times.
-- **Actual:** the table says 12:28 (pod counts), 2 s under 12:30. Only the wording is off.
-- **Route:** scenarist: write the band as "12:15-15:00" (or "~12:30-15:00"); qa changes the target to match.
-
 ### QA-11 [systems] Corrupt schemaVersion below 1 throws in migrate and strands the player   S3
 - **Found by:** qa code review (T-046, sprint 2). Test: `tests/server/Specs/Persistence.spec.luau`
   "migrate does not throw on a corrupt version below 1".
@@ -136,6 +130,10 @@ named role. Line numbers are for `main` at `dde2064` (build 1)._
 
 ### QA-F1 [gdd] First rank-up missed 5 min at 3 taps/s   S3   (GDD side fixed by D-033; config tracked as QA-10)
 - Sim rerun with rev 2: Rank 2 at 2:47 / 3:16 (5/s) and 3:42 / 4:36 (3/s). All under 5 min.
+
+### QA-F6 [gdd] 3 taps/s first-rebirth band starts 2 s after the GDD's own time   S3   (closed by D-052)
+- No GDD change. `timing_sim.py` passes two-sided bands within ±15 s of either edge (`BAND_TOLERANCE`), so
+  12:28 against 12:30-15:00 now reads "PASS (within 15 s of edge, D-052)". "< X" caps stay strict.
 
 ### QA-F2 [gdd] GDD 4.7 table slower than its own numbers   S3   (fixed by D-033)
 - 4.7 now uses the sim times; `GDD_TIMES` and the bands in `timing_sim.py` updated. Leftover wording: QA-F6.

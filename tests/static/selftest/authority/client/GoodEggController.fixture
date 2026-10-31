@@ -16,3 +16,10 @@ local f = 5
 local g = 6
 local h = 7
 local jitter = Random.new():NextNumber(-1, 1)
+-- "roll" inside a name is not a roll function (sprint 2 false positive on Ui.scrollList).
+function Ui.scrollList(props, paddingPx)
+	return props
+end
+local function enroll(player)
+	return player
+end

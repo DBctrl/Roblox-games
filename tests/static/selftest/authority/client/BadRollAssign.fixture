@@ -1,0 +1,6 @@
+-- qa selftest fixture: a roll function defined by assignment must still FAIL.
+local Egg = {}
+Egg.rollPet = function(egg)
+	return egg
+end
+return Egg
