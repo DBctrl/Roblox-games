@@ -189,6 +189,25 @@ EffectsConfig.RarityColors = table.freeze({
 } :: { [string]: Color3 })
 EffectsConfig.DEFAULT_RARITY_COLOR = Color3.fromRGB(230, 230, 240)
 
+-- Pet follow (T-044, architecture 7: within 120 studs, <= 36 models alive, one Heartbeat loop, BulkMoveTo).
+EffectsConfig.Pets = table.freeze({
+	renderRadius = 120, -- studs from the local character (camera if no character)
+	maxModels = 36, -- pet models alive (shown + cached) at any time
+	maxPerPlayer = 6, -- equip slots max (3 + 2 rebirth + 1 VIP)
+	maxIdLength = 32, -- longer ids in EquippedPets are ignored
+	refreshInterval = 0.5, -- seconds between re-picking which pets to show
+	followSharpness = 8, -- higher = snappier follow (exponential smoothing per second)
+	snapDistance = 40, -- studs; a pet further than this from its target teleports (respawn, teleport)
+	rowSpacing = 3.2, -- studs between pets in a row behind the owner
+	rowBack = 4.5, -- studs behind the owner for the first row
+	rowDepth = 3, -- studs between rows
+	perRow = 3,
+	floatHeight = 0.5, -- studs above the root, before bob
+	bobAmplitude = 0.45,
+	bobSpeed = 3, -- radians/s
+	sphereSize = 1.8, -- fallback ball diameter when ReplicatedStorage.Assets.Pets.<petId> is missing
+})
+
 -- Pure: particle count for a coin burst of `amount` coins/MP. Safe on NaN, inf and negatives.
 function EffectsConfig.coinParticles(amount: number?): number
 	local c = EffectsConfig.CoinBurst
@@ -206,6 +225,46 @@ function EffectsConfig.donationParticles(tier: number?): number
 		t = math.clamp(math.floor(tier), 1, 5)
 	end
 	return t * EffectsConfig.CoinBurst.donationPerTier
+end
+
+-- Pure: parses the EquippedPets attribute ("PuffPup,BubbleBunny") into at most `Pets.maxPerPlayer` ids.
+-- Non-strings, empty entries and over-long ids are skipped. Order is kept (it decides the formation slot).
+function EffectsConfig.parseEquippedPets(value: unknown): { string }
+	local out: { string } = {}
+	if type(value) ~= "string" or value == "" then
+		return out
+	end
+	local cfg = EffectsConfig.Pets
+	for id in string.gmatch(value, "[^,]+") do
+		local trimmed = string.match(id, "^%s*(.-)%s*$") or ""
+		if trimmed ~= "" and #trimmed <= cfg.maxIdLength then
+			table.insert(out, trimmed)
+			if #out >= cfg.maxPerPlayer then
+				break
+			end
+		end
+	end
+	return out
+end
+
+-- Pure: the offset (owner space: +X right, +Z back) of pet `index` (1-based) out of `count` pets.
+-- Rows of `perRow` behind the owner, each row centered.
+function EffectsConfig.petOffset(index: number, count: number): Vector3
+	local cfg = EffectsConfig.Pets
+	local row = math.floor((index - 1) / cfg.perRow)
+	local inRow = math.min(cfg.perRow, count - row * cfg.perRow)
+	local col = (index - 1) % cfg.perRow
+	local x = (col - (inRow - 1) / 2) * cfg.rowSpacing
+	local z = cfg.rowBack + row * cfg.rowDepth
+	return Vector3.new(x, cfg.floatHeight, z)
+end
+
+-- Pure: smoothing factor for exponential follow over `dt` seconds (0..1, frame-rate independent).
+function EffectsConfig.followAlpha(dt: number): number
+	if dt ~= dt or dt <= 0 then
+		return 0
+	end
+	return 1 - math.exp(-EffectsConfig.Pets.followSharpness * dt)
 end
 
 -- Pure: smoothstep 0..1.
@@ -267,6 +326,11 @@ function EffectsConfig.validate()
 	local _, total1 = EffectsConfig.hatchTimes(1)
 	local _, total3 = EffectsConfig.hatchTimes(EffectsConfig.Hatch.maxReveals)
 	assert(total1 >= 1.5 and total3 <= 2.6, "hatch animation is not about 2 s")
+	-- Pets: the cap must cover at least the local player's full formation.
+	local p = EffectsConfig.Pets
+	assert(p.maxModels >= p.maxPerPlayer, "pet model cap below one player's slots")
+	assert(p.maxModels <= 36, "pet model cap above architecture 7 budget (36)")
+	assert(p.renderRadius <= 120, "pet render radius above architecture 7 budget (120)")
 end
 
 return table.freeze(EffectsConfig)
