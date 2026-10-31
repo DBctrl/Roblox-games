@@ -5,7 +5,7 @@
 -- The roll uses one server `Random` and the weights in EconomyConfig.EGGS (the same table the egg UI shows).
 -- Cost, roll and inventory insert happen in ONE DataService.update, so a hatch is all-or-nothing.
 -- Every equip, unequip or delete ends with MultiplierService.refresh (CR-c, D-032), so M is never stale.
--- Sole writer of EquippedPets, PetCount, PetSlots, PityStarEgg and PityGalaxyEgg.
+-- Sole writer of EquippedPets, PetInventory, PetCount, PetSlots, PityStarEgg and PityGalaxyEgg.
 -- Lean v1 (D-034): coin eggs (Basic, Shiny) only. Robux eggs, pity rolls and receipt grants (FixedPet,
 -- StarterPack, RobuxEgg) are built in T-073 / sprint 3; until then `grantEgg` refuses Robux eggs.
 
@@ -153,6 +153,37 @@ end
 
 -- Attributes ------------------------------------------------------------------------------------------------
 
+-- PetInventory attribute (architecture 1e, CR-S2a, D-051): "uid:petId:e" entries, e = 1 equipped / 0 not,
+-- sorted by numeric uid, "" when empty, at most INVENTORY_HARD_CAP entries. Display only for the client.
+local function inventoryString(data: ProfileData): string
+	local equipped: { [string]: boolean } = {}
+	for _, uid in data.pets.equipped do
+		equipped[uid] = true
+	end
+	local uids: { string } = {}
+	for uid in data.pets.inventory do
+		table.insert(uids, uid)
+	end
+	table.sort(uids, function(a: string, b: string): boolean
+		local na, nb = tonumber(a), tonumber(b)
+		if na and nb and na ~= nb then
+			return na < nb
+		end
+		if (na == nil) ~= (nb == nil) then
+			return na ~= nil -- numeric uids first (corrupt saves only)
+		end
+		return a < b
+	end)
+	local parts: { string } = {}
+	for i, uid in uids do
+		if i > EconomyConfig.INVENTORY_HARD_CAP then
+			break
+		end
+		parts[i] = `{uid}:{data.pets.inventory[uid].id}:{if equipped[uid] then "1" else "0"}`
+	end
+	return table.concat(parts, ",")
+end
+
 local function refreshAttributes(player: Player)
 	local data = Deps.data().getData(player)
 	if data == nil then
@@ -166,6 +197,7 @@ local function refreshAttributes(player: Player)
 		end
 	end
 	setAttr(player, Attr.EquippedPets, table.concat(ids, ","))
+	setAttr(player, Attr.PetInventory, inventoryString(data))
 	setAttr(player, Attr.PetCount, inventoryCount(data))
 	setAttr(player, Attr.PetSlots, slotsFor(player, data))
 	setAttr(player, Attr.PityStarEgg, math.floor(Guard.clampFinite(data.pity.StarEgg, 0, 99, 0)))
