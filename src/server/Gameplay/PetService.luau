@@ -339,8 +339,8 @@ function PetService.tryHatch(player: Player, eggId: Types.EggId, count: number):
 	return true
 end
 
--- Free hatch with no cost, stand or activity check (server callers only: daily Day-4 reward, later receipts).
--- Lean v1: coin eggs only; Robux eggs (pity, restricted fallback) arrive with T-073.
+-- Free hatch with no cost, stand or activity check (server callers only: the daily Day-4 reward).
+-- Coin eggs only: Robux eggs are granted only through their receipt grant (grantRobuxEgg), never for free.
 function PetService.grantEgg(player: Player, eggId: Types.EggId, count: number): boolean
 	local dataApi = Deps.data()
 	local data = dataApi.getData(player)
@@ -349,7 +349,7 @@ function PetService.grantEgg(player: Player, eggId: Types.EggId, count: number):
 		return false
 	end
 	if egg.currency ~= "Coins" then
-		return false -- TODO(T-073): Robux egg roll with pity and the restrictedGrant fallback
+		return false -- no free Robux egg hatch, ever (GDD 8g; D-016 #5)
 	end
 	local autoDelete = dataApi.getSetting(player, "AutoDeleteCommons")
 	local petIds = rollPets(egg, count)
@@ -531,10 +531,101 @@ local function grantStarterPack(player: Player, key: Types.ProductKey, data: Pro
 	return true
 end
 
+-- Robux egg receipt (T-073). Allowed players: `count` server rolls in order with the saved pity counter (true odds
+-- at the pity hatch). Restricted players (PaidRandomAllowed false, fail closed): the stated fixed pet from
+-- ProductCatalog.restrictedGrant (x3 for a 3-pack), no roll, pity unchanged, logged. Never nothing (D-016 #4).
+local function grantRobuxEgg(player: Player, key: Types.ProductKey, data: ProfileData): boolean
+	local entry = ProductCatalog.get(key)
+	local eggId = entry and entry.eggId
+	local egg = eggId and EconomyConfig.EGGS[eggId]
+	local count = entry and entry.count
+	if
+		entry == nil
+		or not entry.onSale
+		or entry.grantKind ~= "RobuxEgg"
+		or egg == nil
+		or egg.currency ~= "Robux"
+		or count == nil
+		or not Guard.isIntInRange(count, 1, EconomyConfig.HATCH_MULTI_COUNT)
+	then
+		return false
+	end
+	local id = eggId :: Types.EggId
+	local restricted = not Deps.paidRandomAllowed(player)
+	local petIds: { string } = {}
+	local forcedList: { boolean } = {}
+	local newPity: number? = nil
+	if restricted then
+		local fixed = ProductCatalog.restrictedGrant(entry.key)
+		if EconomyConfig.PETS[fixed.petId] == nil then
+			return false
+		end
+		for i = 1, fixed.count do
+			petIds[i] = fixed.petId
+			forcedList[i] = false
+		end
+	else
+		local pity = Guard.clampFinite(data.pity[id], 0, 1e6, 0)
+		for i = 1, count do
+			local petId, nextPity, forced = PetRoll.pickWithPity(egg, pity, rng)
+			petIds[i] = petId
+			forcedList[i] = forced
+			pity = nextPity
+		end
+		newPity = pity
+	end
+	if not paidRoom(data, #petIds) then
+		refuseFull(player)
+		return false -- nothing written: the rolls above are discarded with the unprocessed receipt
+	end
+
+	local owned: { [string]: boolean } = {}
+	for _, row in data.pets.inventory do
+		owned[row.id] = true
+	end
+	local results: { HatchedPet } = {}
+	for i, petId in petIds do
+		local uid = takeUid(data)
+		data.pets.inventory[uid] = { id = petId }
+		table.insert(results, {
+			uid = uid,
+			petId = petId,
+			rarity = EconomyConfig.PETS[petId].rarity :: Types.Rarity,
+			isNew = not owned[petId],
+			autoDeleted = false, -- paid pets are never auto-deleted
+			pity = forcedList[i],
+		})
+		owned[petId] = true
+	end
+	if newPity ~= nil then
+		data.pity[id] = newPity
+	else
+		print(
+			`[PetService] restricted Robux egg receipt: user {player.UserId} key {key} -> {#petIds} x {petIds[1]}`
+		)
+	end
+	local pityAfter = if newPity ~= nil then newPity else Guard.clampFinite(data.pity[id], 0, 1e6, 0)
+	task.defer(function()
+		if player.Parent ~= Players then
+			return
+		end
+		refreshAttributes(player)
+		MultiplierService.refresh(player)
+		if hatchResultRemote then
+			local payload: Types.HatchResultPayload = { eggId = id, pets = results, pity = pityAfter }
+			hatchResultRemote:FireClient(player, payload)
+		end
+		hatchedEvent:Fire(player, id, results)
+		Deps.funnel(player, "FirstEgg")
+	end)
+	return true
+end
+
 -- Exposed for qa's GDD 8g firewall test (walks every grant fn with a fake profile).
 PetService.grants = {
 	FixedPet = grantFixedPet,
 	StarterPack = grantStarterPack,
+	RobuxEgg = grantRobuxEgg,
 }
 
 -- Lifecycle -------------------------------------------------------------------------------------------------
@@ -624,6 +715,7 @@ function PetService.Start()
 
 	Deps.registerGrant("FixedPet", grantFixedPet)
 	Deps.registerGrant("StarterPack", grantStarterPack)
+	Deps.registerGrant("RobuxEgg", grantRobuxEgg)
 
 	dataApi.ProfileLoaded:Connect(onLoaded)
 	Players.PlayerRemoving:Connect(onRemoving)

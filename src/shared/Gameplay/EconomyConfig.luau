@@ -395,6 +395,36 @@ function EconomyConfig.bossCoinsPerSec(boss: Boss, rebirths: number): number
 	return boss.coins * EconomyConfig.coinRebirthMult(rebirths) / EconomyConfig.BOSS_CYCLE_SEC
 end
 
+-- Pity odds (GDD 5): the forced hatch is Legendary PITY_LEGENDARY_WEIGHT / Mythic PITY_MYTHIC_WEIGHT out of
+-- ODDS_TOTAL, from the egg's own Legendary and Mythic pets (validate() asserts one of each on Robux eggs).
+-- Same rows the UI shows at 9/10 and PetService rolls, so the shown true odds are the odds used. Pure, no roll.
+function EconomyConfig.pityOdds(egg: Egg): { EggPet }
+	local rows: { EggPet } = {}
+	for _, entry in egg.pets do
+		local rarity = EconomyConfig.PETS[entry.petId].rarity
+		if rarity == "Legendary" then
+			table.insert(rows, { petId = entry.petId, weight = EconomyConfig.PITY_LEGENDARY_WEIGHT })
+		elseif rarity == "Mythic" then
+			table.insert(rows, { petId = entry.petId, weight = EconomyConfig.PITY_MYTHIC_WEIGHT })
+		end
+	end
+	return rows
+end
+
+-- True odds of the NEXT hatch of `egg` with saved counter `pity`: the pity rows when this hatch is the pity hatch
+-- (pity >= pityAt - 1), else the base table. Coin eggs always return the base table.
+function EconomyConfig.nextHatchOdds(egg: Egg, pity: number): { EggPet }
+	if egg.pityAt and isFinite(pity) and pity >= egg.pityAt - 1 then
+		return EconomyConfig.pityOdds(egg)
+	end
+	return egg.pets
+end
+
+-- True for the rarities that reset the pity counter (Legendary or better).
+function EconomyConfig.isPityHit(rarity: string): boolean
+	return rarity == "Legendary" or rarity == "Mythic"
+end
+
 -- Asserts the tables are well formed. Runs at server start (BossService) and in qa tests (T-024).
 function EconomyConfig.validate()
 	local function ascending(list: { any }, field: string, label: string)
@@ -470,6 +500,16 @@ function EconomyConfig.validate()
 				`EconomyConfig: Robux egg {eggId} needs a restrictedGrant in its table`
 			)
 			assert(egg.pityAt and egg.pityAt >= 2, `EconomyConfig: Robux egg {eggId} needs pityAt`)
+			local legendary, mythic = 0, 0
+			for _, entry in egg.pets do
+				local rarity = EconomyConfig.PETS[entry.petId].rarity
+				legendary += if rarity == "Legendary" then 1 else 0
+				mythic += if rarity == "Mythic" then 1 else 0
+			end
+			assert(
+				legendary == 1 and mythic == 1,
+				`EconomyConfig: Robux egg {eggId} needs one Legendary and one Mythic for pity`
+			)
 		end
 	end
 	assert(listed == 0, "EconomyConfig: EGG_IDS must list every egg exactly once")
