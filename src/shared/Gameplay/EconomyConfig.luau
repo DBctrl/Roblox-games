@@ -125,6 +125,13 @@ EconomyConfig.DUEL_REWARD_BOSS_SEC = 120 -- winner gets 2 min of their own best-
 EconomyConfig.DUEL_REWARDS_PER_HOUR = 5
 EconomyConfig.DUEL_REWARDS_PER_OPPONENT = 2 -- per 15 min
 EconomyConfig.DUEL_OPPONENT_WINDOW_SEC = 15 * 60
+EconomyConfig.DUEL_REWARD_WINDOW_SEC = 60 * 60 -- DUEL_REWARDS_PER_HOUR counts wins in this window
+EconomyConfig.DUEL_TAP_TOTAL_MAX = EconomyConfig.DUEL_TAP_CAP_PER_SEC * EconomyConfig.DUEL_ACTIVE_SEC -- 80
+EconomyConfig.DUEL_TAP_BURST_SEC = 1 -- unused duel tap allowance carried at most this long (lag, batching)
+EconomyConfig.DUEL_CHALLENGE_COOLDOWN_SEC = 15 -- per target (GDD 6 anti-grief)
+EconomyConfig.DUEL_DECLINE_MUTE_COUNT = 3 -- declines in a row from one target ...
+EconomyConfig.DUEL_MUTE_SEC = 10 * 60 -- ... mute the challenger for that target this long
+EconomyConfig.DUEL_BLOCK_MAX = 50 -- session block list size (architecture 2 #12)
 
 -- Tools (GDD 4.2; reset on rebirth) ----------------------------------------------------------------------
 local tools: { Tool } = {
