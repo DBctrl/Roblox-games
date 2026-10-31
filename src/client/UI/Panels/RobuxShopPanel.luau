@@ -9,7 +9,8 @@
 --   Pack), Pets (Ring Light Retriever, and the Robux eggs, which open the egg screen with odds, T-058) and Style
 --   (Golden Glow Fit, "Exclusive").
 -- * Ladder (GDD 8e, D-016 #8): only tier PaidTier + 1 is listed, named "x2 Mog Points" etc. from the catalog,
---   with "Does not stack: the highest tier you own applies." Owned and lower tiers are never shown.
+--   with the catalog description, which carries the lawyer's exact `ProductCatalog.LADDER_NOTE` (T-071, D-056).
+--   Owned and lower tiers are never shown.
 -- * Names, prices and descriptions come only from Contracts/ProductCatalog. A Buy press sends only the key with
 --   `RequestPurchase`; the server re-runs every gate and opens the prompt itself.
 -- * Placeholder ids: `ProductCatalog.canSell` is false ("NoProductId") until the owner creates the products, so
@@ -34,10 +35,10 @@ local Attr = Types.PlayerAttr
 local Theme = Ui.Theme
 
 local PANEL_NAME = "RobuxShop"
-local ROW_PX = 96
+local ROW_PX = 128 -- tall enough for the longest catalog description at the 9 px text floor on a phone
 local BUY_DEBOUNCE_SEC = 2.5 -- RequestPurchase allows 0.5/s, burst 2
 local BOOST_CAP_SEC = 2 * 60 * 60 -- display fallback; EconomyConfig.BOOST_CAP_SEC is the rule (server)
-local LADDER_NOTE = "Permanent. Does not stack: the highest tier you own applies."
+local LADDER_NOTE = ProductCatalog.LADDER_NOTE -- lawyer's exact wording (T-071); never a local copy
 local DUEL_NOTE = "Pets, multipliers, VIP and boosts don't count in duels."
 
 type TabName = "Boosts" | "Pets" | "Style"
@@ -151,7 +152,7 @@ local function refresh()
 			else
 				row.name.Text = entry.displayName
 				local ownedText = if owned > 0 then ` You own x{2 ^ owned}.` else ""
-				row.info.Text = `MP from tapping, pods and auto taps. {LADDER_NOTE}{ownedText}`
+				row.info.Text = `{entry.description}{ownedText}`
 				setBuy(row.button, entry.priceLabel, blockedText(entry.key))
 			end
 		elseif row.kind == "Product" and row.key then

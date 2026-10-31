@@ -7,8 +7,8 @@
 -- * Opens from a Robux EggStand prompt (EggController routes it here) or the shop's "Odds Info" button. Opening
 --   never buys.
 -- * Odds come from EconomyConfig.EGGS[eggId].pets through GameData, the same integer weights PetService rolls.
---   The pity rule is written out in words: "Every 10th hatch with no Legendary or better is a guaranteed
---   Legendary (90%) or Mythic (10%)." The counter "Pity: 7/10" is the server's Pity<Egg> attribute (saved per egg).
+--   The pity rule is the lawyer's exact `ProductCatalog.PITY_RULE` (T-071, D-056), the same words as the product
+--   listing. The counter "Pity: 7/10" is the server's Pity<Egg> attribute (saved per egg).
 -- * True odds (legal 2.2): when the counter is 9/10 the table shows the real next-hatch odds (the Legendary and
 --   Mythic pets at 90% / 10%, every other pet 0%) instead of the base table, on this screen and in the
 --   confirmation step. A 3-pack lists the odds for each of its 3 hatches.
@@ -41,8 +41,7 @@ local PANEL_NAME = "RobuxEgg"
 local ROW_PX = 52
 local BUY_DEBOUNCE_SEC = 2.5 -- RequestPurchase allows 0.5/s, burst 2
 local DEFAULT_PITY_AT = 10
-local PITY_RULE =
-	"Every 10th hatch with no Legendary or better is a guaranteed Legendary (90%) or Mythic (10%)."
+local PITY_RULE = ProductCatalog.PITY_RULE -- lawyer's exact wording (T-071); never a local copy
 local PACK_NOTE = "Each of the 3 hatches uses these odds. Pity can trigger inside the pack."
 local RESTRICTED_TEXT = "Robux eggs aren't available on your account"
 
@@ -486,14 +485,14 @@ local function build(): Elements
 		TextWrapped = true,
 		TextColor3 = Theme.text,
 		Position = UDim2.fromScale(0, 0.07),
-		Size = UDim2.fromScale(1, 0.09),
+		Size = UDim2.fromScale(1, 0.12),
 		Parent = panel.body,
 	})
 	Ui.textLimit(17, 9).Parent = rule
 	local list = Ui.scrollList({
 		Name = "Odds",
-		Position = UDim2.fromScale(0, 0.17),
-		Size = UDim2.fromScale(1, 0.56),
+		Position = UDim2.fromScale(0, 0.2),
+		Size = UDim2.fromScale(1, 0.53),
 		Parent = panel.body,
 	}, 4)
 	local status = Ui.label({
