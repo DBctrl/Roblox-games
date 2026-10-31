@@ -12,6 +12,9 @@
 -- * Shop buttons are hidden until FirstWin (GDD 8a). The Robux shop button arrives with T-057; this HUD has no
 --   purchase prompt of any kind.
 -- * The Roblox player list starts collapsed; the "Players" button toggles it.
+-- * T-034: "Pods" button (ShopController pod shop), "Settings" button (SettingsController), a pod income line
+--   from IdleMpPerSec, and a rebirth button that pulses "REBIRTH READY" when Coins >= RebirthCost; it opens
+--   Panels/RebirthPanel (confirm screen, the only RequestRebirth sender).
 -- * Updates are event-driven (attribute changes, max 5 Hz from the server) plus one 2 Hz check for the arrow.
 
 local Players = game:GetService("Players")
@@ -25,6 +28,7 @@ local Remotes = require(Contracts:WaitForChild("Remotes"))
 local Types = require(Contracts:WaitForChild("Types"))
 
 local GameData = require(script.Parent.Util.GameData)
+local RebirthPanel = require(script.Parent.Panels.RebirthPanel)
 local Ui = require(script.Parent.Util.Ui)
 local UiEvents = require(script.Parent.Util.UiEvents)
 
@@ -33,6 +37,7 @@ local Theme = Ui.Theme
 
 local ARROW_HIDE_DISTANCE = 12 -- studs: close enough to the stage, the arrow goes away
 local ARROW_CHECK_SEC = 0.5
+local ARROW_MODEL_LIFT = 3 -- studs above a Model stage's pivot
 local MOG_CHECK_SEC = 0.25
 local MOG_DEBOUNCE_SEC = 1
 
@@ -55,6 +60,10 @@ type Elements = {
 	mogButton: TextButton,
 	mogScale: UIScale,
 	mogPulse: Tween,
+	idleLabel: TextLabel,
+	rebirthButton: TextButton,
+	rebirthScale: UIScale,
+	rebirthPulse: Tween,
 }
 
 local ui: Elements? = nil
@@ -148,6 +157,17 @@ local function build(): Elements
 	}, Theme.good)
 	Ui.textLimit(20).Parent = rankText
 
+	-- Pod income while standing in an owned pod (IdleService's IdleMpPerSec, GDD 4.3).
+	local idleLabel = Ui.label({
+		Name = "IdleMp",
+		Size = UDim2.fromScale(0.6, 0.16),
+		LayoutOrder = 4,
+		TextColor3 = Theme.good,
+		Visible = false,
+		Parent = top,
+	})
+	Ui.textLimit(20).Parent = idleLabel
+
 	-- Tap hint: pulsing text and a tap ring in the lower middle of the screen.
 	local tapHint = Ui.new("Frame", {
 		Name = "TapHint",
@@ -190,34 +210,74 @@ local function build(): Elements
 	})
 	Ui.textLimit(20).Parent = playersButton
 
-	-- Right side, above the mobile jump button: shop buttons, hidden until FirstWin (GDD 8a, 9: small, not
-	-- blinking).
+	-- Top-right, under Players: the Settings button (always shown; it sells nothing).
+	local settingsButton = Ui.button({
+		Name = "SettingsButton",
+		Text = "Settings",
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -6, 0.07, 12),
+		Size = UDim2.fromScale(0.13, 0.07),
+		Parent = screen,
+	})
+	Ui.textLimit(20).Parent = settingsButton
+	settingsButton.Activated:Connect(function()
+		UiEvents.fireOpenPanel("Settings")
+	end)
+
+	-- Right side, above the mobile jump button: panel buttons in a column, hidden until FirstWin (GDD 8a, 9:
+	-- small, not blinking).
 	local shopButtons = Ui.new("Frame", {
 		Name = "ShopButtons",
 		BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -8, 0.58, 0),
-		Size = UDim2.fromScale(0.14, 0.09),
+		Position = UDim2.new(1, -8, 0.5, 0),
+		Size = UDim2.fromScale(0.13, 0.3),
 		Visible = false,
 		Parent = screen,
 	}, {
-		Ui.sizeLimit(88, 44, 200, 80),
+		Ui.sizeLimit(88, 150, 180, 280),
 		Ui.new("UIListLayout", {
-			FillDirection = Enum.FillDirection.Horizontal,
+			FillDirection = Enum.FillDirection.Vertical,
 			HorizontalAlignment = Enum.HorizontalAlignment.Right,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
 			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0.04, 0),
 		}),
 	})
-	local toolsButton = Ui.button({
-		Name = "ToolsButton",
-		Text = "Tools",
-		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = Theme.good,
-		Parent = shopButtons,
+	local function panelButton(name: string, text: string, order: number, color: Color3, panel: string)
+		local button = Ui.button({
+			Name = name,
+			Text = text,
+			LayoutOrder = order,
+			Size = UDim2.fromScale(1, 0.3),
+			BackgroundColor3 = color,
+			Parent = shopButtons,
+		})
+		Ui.textLimit(22).Parent = button
+		button.Activated:Connect(function()
+			UiEvents.fireOpenPanel(panel)
+		end)
+	end
+	panelButton("ToolsButton", "Tools", 1, Theme.good, "Tools")
+	panelButton("PodsButton", "Pods", 2, Theme.good, "Pods")
+	panelButton("PetsButton", "Pets", 3, Theme.panelLight, "Pets") -- T-036 (PetsController)
+
+	-- Top-left: rebirth button (after FirstWin). "REBIRTH READY" pulses when coins reach the cost (GDD 4.5).
+	local rebirthButton = Ui.button({
+		Name = "RebirthButton",
+		Text = "Rebirth",
+		AnchorPoint = Vector2.new(0, 0),
+		Position = UDim2.new(0, 6, 0, 4),
+		Size = UDim2.fromScale(0.16, 0.08),
+		Visible = false,
+		Parent = screen,
 	})
-	Ui.textLimit(22).Parent = toolsButton
-	toolsButton.Activated:Connect(function()
-		UiEvents.fireOpenPanel("Tools")
+	Ui.textLimit(22).Parent = rebirthButton
+	local rebirthScale = Ui.new("UIScale", { Parent = rebirthButton })
+	local rebirthPulse = pulse(rebirthScale, { Scale = 1.1 }, 0.5)
+	rebirthPulse:Cancel() -- plays only while a rebirth is affordable
+	rebirthButton.Activated:Connect(function()
+		UiEvents.fireOpenPanel("Rebirth")
 	end)
 
 	-- Bottom-centre: the giant MOG button (hidden until a boss stage is in range).
@@ -254,6 +314,10 @@ local function build(): Elements
 		mogButton = mogButton,
 		mogScale = mogScale,
 		mogPulse = mogPulse,
+		idleLabel = idleLabel,
+		rebirthButton = rebirthButton,
+		rebirthScale = rebirthScale,
+		rebirthPulse = rebirthPulse,
 	}
 end
 
@@ -318,6 +382,27 @@ local function refresh()
 
 	elements.tapHint.Visible = not hasTapped and not firstWin
 	elements.shopButtons.Visible = firstWin
+
+	local idle = Ui.numAttr(Attr.IdleMpPerSec, 0)
+	elements.idleLabel.Visible = idle > 0
+	if idle > 0 then
+		elements.idleLabel.Text = `Pod: +{NumberFormat.abbreviate(idle)} MP/s`
+	end
+
+	local rebirthButton = elements.rebirthButton
+	rebirthButton.Visible = firstWin or Ui.numAttr(Attr.Rebirths, 0) > 0
+	if RebirthPanel.isReady() then
+		rebirthButton.Text = "REBIRTH READY"
+		rebirthButton.BackgroundColor3 = Theme.accent
+		if elements.rebirthPulse.PlaybackState ~= Enum.PlaybackState.Playing then
+			elements.rebirthPulse:Play()
+		end
+	else
+		rebirthButton.Text = "Rebirth"
+		rebirthButton.BackgroundColor3 = Theme.panelLight
+		elements.rebirthPulse:Cancel()
+		elements.rebirthScale.Scale = 1
+	end
 end
 
 -- MOG button ------------------------------------------------------------------------------------------
@@ -333,9 +418,9 @@ local function bossInRange(): GameData.Boss?
 	local best: GameData.Boss? = nil
 	local bestDistance = math.huge
 	for _, boss in GameData.bossesInWorld(Ui.numAttr(Attr.WorldId, 1)) do
-		local stage = GameData.bossStage(boss.id)
-		if stage then
-			local distance = (stage.Position - root.Position).Magnitude
+		local stagePos = GameData.positionOf(GameData.bossStage(boss.id))
+		if stagePos then
+			local distance = (stagePos - root.Position).Magnitude
 			if distance <= range and distance < bestDistance then
 				best, bestDistance = boss, distance
 			end
@@ -436,7 +521,7 @@ local function ensureBeam(): Beam?
 end
 
 local function updateArrow()
-	local stage: BasePart? = nil
+	local stage: Instance? = nil
 	if not Ui.boolAttr(Attr.FirstWin) then
 		local target = meterTarget()
 		stage = if target then GameData.bossStage(target.id) else nil
@@ -445,23 +530,27 @@ local function updateArrow()
 	if currentBeam == nil then
 		return
 	end
-	if stage == nil then
+	-- A stage may be a Model or a BasePart (CR-4): aim at its position, hang the attachment on a part of it.
+	local stagePos = GameData.positionOf(stage)
+	local anchor = GameData.anchorPartOf(stage)
+	if stagePos == nil or anchor == nil then
 		currentBeam.Enabled = false
 		return
 	end
-	if stageAttachment == nil or stageAttachment.Parent ~= stage then
+	local aim = if stage and stage:IsA("BasePart")
+		then stagePos + Vector3.new(0, stage.Size.Y / 2, 0)
+		else stagePos + Vector3.new(0, ARROW_MODEL_LIFT, 0)
+	if stageAttachment == nil or stageAttachment.Parent ~= anchor then
 		if stageAttachment then
 			stageAttachment:Destroy()
 		end
-		stageAttachment = Ui.new("Attachment", {
-			Name = "HudArrowTo",
-			Position = Vector3.new(0, stage.Size.Y / 2, 0),
-			Parent = stage,
-		})
+		stageAttachment = Ui.new("Attachment", { Name = "HudArrowTo", Parent = anchor })
 	end
-	currentBeam.Attachment1 = stageAttachment
+	local target = stageAttachment :: Attachment
+	target.Position = anchor.CFrame:PointToObjectSpace(aim)
+	currentBeam.Attachment1 = target
 	local from = rootAttachment
-	local distance = if from then (from.WorldPosition - stage.Position).Magnitude else 0
+	local distance = if from then (from.WorldPosition - stagePos).Magnitude else 0
 	currentBeam.Enabled = distance > ARROW_HIDE_DISTANCE
 end
 
@@ -498,10 +587,22 @@ function HudController:Start()
 	end)
 
 	for _, name in
-		{ Attr.Mp, Attr.Coins, Attr.Rank, Attr.LifetimeMp, Attr.FirstWin, Attr.WorldId, Attr.DataLoaded }
+		{
+			Attr.Mp,
+			Attr.Coins,
+			Attr.Rank,
+			Attr.LifetimeMp,
+			Attr.FirstWin,
+			Attr.WorldId,
+			Attr.DataLoaded,
+			Attr.IdleMpPerSec,
+			Attr.Rebirths,
+			Attr.RebirthCost,
+		}
 	do
 		player:GetAttributeChangedSignal(name):Connect(refresh)
 	end
+	task.spawn(RebirthPanel.start) -- its own panel; waits for the RequestRebirth remote
 	UiEvents.Tapped:Connect(function()
 		if not hasTapped then
 			hasTapped = true

@@ -8,6 +8,8 @@
 --   * `migrate(data)` upgrades older saves step by step to SCHEMA_VERSION in place. It returns false (and the
 --     caller must NOT save) if the save comes from a newer schema than this server knows (a newer server wrote it):
 --     loading and re-saving it here could drop fields, so DataService kicks with "please rejoin" instead.
+--     It also returns false for a corrupt version (not an integer >= 1). DataService runs migrate + reconcile on
+--     a copy inside pcall and only copies the result back on success, so a failure never changes the save.
 --   * receipts: last RECEIPT_LIMIT PurchaseIds, oldest first (FIFO). Used by MonetizationService (T-056) so a
 --     duplicate ProcessReceipt is never granted twice.
 
@@ -119,13 +121,18 @@ end
 local MIGRATIONS: { [number]: (data: { [any]: any }) -> () } = {}
 
 -- Returns true if `data` is now at SCHEMA_VERSION, false if it is from a newer schema (do not load or save it).
-function ProfileSchema.migrate(data: { [any]: any }): boolean
+-- Returns (true) on success, or (false, "newer" | "corrupt"). A version that is present but not an integer >= 1
+-- (0, -1, 0.5, inf) is corrupt: nothing is changed and the caller must not save over it (QA-11).
+function ProfileSchema.migrate(data: { [any]: any }): (boolean, string?)
 	local version = data.schemaVersion
-	if type(version) ~= "number" or version ~= version then
-		version = 1 -- pre-versioned or corrupt field: treat as v1, reconcile fills the rest
+	if version == nil then
+		version = 1 -- pre-versioned save: treat as v1, reconcile fills the rest
+	end
+	if type(version) ~= "number" or version ~= version or version % 1 ~= 0 or version < 1 then
+		return false, "corrupt"
 	end
 	if version > ProfileSchema.SCHEMA_VERSION then
-		return false
+		return false, "newer"
 	end
 	while version < ProfileSchema.SCHEMA_VERSION do
 		local step = MIGRATIONS[version]

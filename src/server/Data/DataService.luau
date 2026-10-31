@@ -30,9 +30,6 @@ local FLUSH_INTERVAL_SEC = 0.2 -- 5 Hz
 local DEFAULT_WAIT_SEC = 30
 local CLOSE_TIMEOUT_SEC = 25
 local SETTING_KEY_MAX_LEN = 32
--- GDD 4.6: Auto-Tap unlocks at Rank 3 or with the Auto Clicker. TODO(CR-3): read an `AutoTapUnlocked` attribute
--- from IdleService instead of this copy of the rank.
-local AUTO_TAP_UNLOCK_RANK = 3
 
 local KICK_LOAD_FAILED =
 	"We couldn't load your save right now. Your progress is safe. Please rejoin in a minute."
@@ -180,13 +177,33 @@ local function load(player: Player)
 	end
 
 	local data = session.data
-	if not ProfileSchema.migrate(data) then
-		warn("DataService: save is from a newer schema; not loading it")
+	-- Migrate and reconcile a copy inside pcall (QA-11). The live table is touched only after both succeed, so a
+	-- corrupt or newer save is released unchanged (the lock is freed, the stored data stays as it was).
+	local copy = ProfileSchema.deepCopy(data)
+	local called, migrated, why = pcall(function()
+		local ok, migrateReason = ProfileSchema.migrate(copy)
+		if ok then
+			ProfileSchema.reconcile(copy)
+		end
+		return ok, migrateReason
+	end)
+	if not called or not migrated then
+		local failReason = if called then why else "migrate error"
+		warn(`DataService: save not loaded ({failReason}); releasing it unchanged and kicking`)
 		session.endSession()
-		player:Kick(KICK_NEWER_SAVE)
+		if player.Parent == Players then
+			player:Kick(if failReason == "newer" then KICK_NEWER_SAVE else KICK_LOAD_FAILED)
+		end
 		return
 	end
-	ProfileSchema.reconcile(data)
+	for key in data do
+		if copy[key] == nil then
+			data[key] = nil
+		end
+	end
+	for key, value in copy do
+		data[key] = value -- in place: the backend saves this exact table
+	end
 	sanitize(data :: any)
 
 	local rankValue, rebirthsValue = makeLeaderstats(player)
@@ -234,12 +251,14 @@ end
 
 -- SetSetting ------------------------------------------------------------------------------------------
 
-local function autoTapAvailable(player: Player): boolean
-	if player:GetAttribute(Attr.AutoClickerOwned) == true then
-		return true
+-- GDD 4.6 unlock rules live in IdleService, the single writer of AutoTapUnlocked / AutoMogUnlocked (CR-3, QA-3).
+local function automationUnlocked(player: Player, key: string): boolean
+	if key == "AutoTap" then
+		return player:GetAttribute(Attr.AutoTapUnlocked) == true
+	elseif key == "AutoMog" then
+		return player:GetAttribute(Attr.AutoMogUnlocked) == true
 	end
-	local rank = player:GetAttribute(Attr.Rank)
-	return type(rank) == "number" and rank >= AUTO_TAP_UNLOCK_RANK
+	return true
 end
 
 local function onSetSetting(player: Player, key: any, value: any)
@@ -258,13 +277,8 @@ local function onSetSetting(player: Player, key: any, value: any)
 		return -- not loaded, or no-op
 	end
 	-- Turning a setting off is always allowed; turning an automation on needs it unlocked.
-	if value == true then
-		if key == "AutoTap" and not autoTapAvailable(player) then
-			return
-		end
-		if key == "AutoMog" and player:GetAttribute(Attr.AutoMogUnlocked) ~= true then
-			return
-		end
+	if value == true and not automationUnlocked(player, key) then
+		return
 	end
 	DataService.update(player, function(data)
 		(data.settings :: any)[field] = value
@@ -345,7 +359,7 @@ function DataService.addCoins(player: Player, amount: number, _reason: Types.Coi
 		data.stats.totalCoinsEarned += amount
 		balance = data.coins
 	end)
-	-- TelemetryService.economy(player, "Source", amount, reason) is wired in T-033.
+	-- Economy telemetry is logged by the caller (TelemetryService.economy), never here, so it is not counted twice.
 	return if ok then balance else 0
 end
 
@@ -368,7 +382,7 @@ function DataService.trySpendCoins(player: Player, amount: number, _reason: Type
 			spent = true
 		end
 	end)
-	-- TelemetryService.economy(player, "Sink", amount, reason) is wired in T-033.
+	-- Economy telemetry is logged by the caller (TelemetryService.economy), never here, so it is not counted twice.
 	return spent
 end
 
