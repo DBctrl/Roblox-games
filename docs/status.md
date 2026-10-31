@@ -1,37 +1,31 @@
 Toolchain: NOT VERIFIED (run ./scripts/doctor.sh, then /toolcheck on the Mac)
 
 # Status
-_Owned by project-manager. One screen. Updated 2026-10-31 (sprint 2 closed, sprint 3 started)._
+_Owned by project-manager. One screen. Updated 2026-10-31 (sprint 3 closed)._
 
-**Game:** "Aura Up!" (working title), mog clicker | **Target:** today, lean v1 | **Stage:** Sprint 2 merged (main 159a05d, build 2); Sprint 3 in progress | **Milestone:** M1 and M2 done in code | **Plan:** 95 tickets, World 1 only (7 bosses)
-**Code repo:** https://github.com/DBctrl/roblox-games (holds `main`; the Mac pulls from here)
+**Game:** "Aura Up!" (working title) | **Stage:** Sprint 3 merged (build 3, SHIP-TO-OWNER, static checks only, no S1) | **Milestone:** M1-M3 done in code; M3 polish and M4 need the Mac | **Plan:** lean v1, World 1, 7 bosses
+**Repo:** https://github.com/DBctrl/roblox-games (`main` is what the Mac pulls)
 
-## Sprint
-Sprint 3 (duels + monetization, code only): gameplay T-095, T-032, T-049, T-050, T-052, T-053, T-073 | systems T-056..T-058, T-054, T-055 | world T-059 | physics T-066 | qa T-068, T-081 | integration T-069, then T-072 merge last | legal T-071 | marketing T-085. Next: Mac session (art, Studio run, playtest, publish). Update 1 = World 2, Update 2 = polish. Details: docs/backlog.md.
+## Done today
+- Sprints 1-3 code merged (D-032, D-051, D-069, D-071); qa fix rounds 1-2 in
+- Applied: Starter Pack re-grant (D-060), Golden Glow Cat 3.20, Galaxy Egg in World 1 (D-057), QA-12, QA-F10, QA-F12 closed
+- Lawyer listing review (T-071) and launch kit (T-085) done
 
-## Done
-- GDD rev 2, B-1 option A (D-021), legal review, architecture v1.3, backlog
-- Sprint 1 (D-032) and Sprint 2 (D-051) code merged; owner approved prices (D-038)
-- Sprint 2 sim: QA-F6 closed (D-052)
+## In progress (code, cloud)
+- CR-I8 post-save hook: systems (MonetizationService runs it) and gameplay (PetService hatch message). Closes QA-14
+- QA-13 duel log clock skew (S3, gameplay)
 
-## In progress
-- Sprint 3 tickets above. Small gameplay item T-095 (rename `equipped` local in PetService.inventoryString; UID_MAX = 1e12-1).
-
-## Blocked (who can unblock)
-- Monetization go-live (T-053, T-056..T-058, T-069, T-073, T-081): code can be built now; going live needs the owner to create the 15 approved developer products in Creator Hub and give the ids (T-069)
-- T-075 donation tips: tips were not in the D-038 approval; needs a new owner price approval (Update 2)
-- Studio checks (T-001, T-002, all [art], T-022, T-023, T-089, T-094, Play-mode specs that SKIP, QA-1/QA-2 UI re-test): the Mac setup
+## Needs the Mac (order in docs/backlog.md "Mac session")
+1 setup + /toolcheck (20 min) | 2 T-001/T-002 | 3 builder art incl. GalaxyEggStand, 2 MogRings, WeekStreakAura | 4 T-022/T-023/T-089 | 5 T-094 full run | 6 T-082/T-083 | 7 T-084 lawyer | 8 products + ids | 9 playtest | 10 T-087 | 11 T-086 RC | 12 publish. About 3 h owner time, about 7.5 h elapsed
 
 ## Needs owner
-1. Mac setup: ./scripts/doctor.sh, `/toolcheck`, Rojo plugin, Studio MCP; pull `main` from DBctrl/roblox-games
-2. Create the 15 developer products after sprint 3 (ids go in T-069)
-3. Approve Speed Sneakers, Neon Pup, Neon Icon Fit and tips later if wanted (not in D-038)
-4. Playtest (gate 2, under 30 min), then publish (gate 4)
-5. Start the creator age check and 2-Step Verification now (16+ trial lead time)
+1. Clone the repo on the Mac, setup, `/toolcheck`
+2. Create the 15 approved developer products and paste the ids (architecture 4f); not-approved: Speed Sneakers, Neon Pup, Neon Icon Fit, tips
+3. Fun playtest (gate 2, under 30 min); then publish (gate 4)
+4. Start the creator age check and 2-Step Verification now (16+ trial lead time)
 
 ## Risks
-- **Bugs:** 11 items still listed Open in docs/qa/bugs.md; main shows a fix for each, qa has not closed them. QA-1 and QA-2 (UI) need a Studio check
-- **Docs drift:** GDD section 8 still holds placeholder prices; scenarist should sync it to D-038 (T-071 lawyer reviews listings against it)
-- **Gameplay load:** 7 tickets in sprint 3; cut order in the backlog Cut list
-- **Integration risk:** three sprints of code merged before any Studio run; T-094 may find wiring bugs late
-- **16+ trial (R-1)** and **unverified APIs** (ProfileStore, AnalyticsService) unchanged
+- Three sprints merged with no Studio run: T-094 may find wiring bugs late; Play-mode specs still SKIP
+- Open bugs: QA-13, QA-14 (S3); QA-1, QA-2, QA-5, QA-8 look fixed in code, qa closes after a Studio check
+- Product ids are placeholder 0: no purchase works until step 8
+- Docs drift: GDD section 8 prices vs D-038 (D-070 synced part); unverified APIs (ProfileStore, AnalyticsService); 16+ trial (R-1)

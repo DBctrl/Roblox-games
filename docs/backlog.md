@@ -312,7 +312,8 @@ Status: done in code (merged, D-051). "Spawn to first rebirth to egg hatch plays
 ---
 
 ## Sprint 3 (duels + monetization, code only, cloud, about 3.5 h)
-**Status: in progress. Prices approved (D-038), so the monetization tickets are unblocked for go-live except the owner steps (create the developer products in Creator Hub, enter ids).** Per role (T-095 added to gameplay; T-071 legal unblocked).
+**Status: CLOSED 2026-10-31. All sprint-3 branches merged to main (D-069, D-071; build 3, docs/qa/build-3.md, verdict SHIP-TO-OWNER, static checks only, no S1). Studio checks stay pending on the Mac. Go-live still waits for the owner to create the 15 developer products.**
+**Applied in code:** Starter Pack duplicate receipt re-grants the contents (D-060); Golden Glow Cat bonus 3.20 (D-060/D-070, EconomyConfig change merged with the fix rounds, qa fixtures already 3.20); Galaxy Egg is in World 1 next to the Star Egg (D-057/D-058, `GalaxyEgg.world = 1`, QA-12 closed). Recheck on the Mac: PetRoll/EconomyConfig specs must pass on 3.20.
 Goal: daily reward, quests, PvP duels with ragdoll code, MonetizationService, shop, Robux eggs. Monetization tickets are built with placeholder prices and ids; they cannot go live until the owner approves prices (gate 5) and creates the developer products. Per role: gameplay T-095, T-032, T-049, T-050, T-052, T-053, T-073; systems T-054..T-058; world T-059; physics T-066; qa T-068, T-081; integration T-069, T-072 (merge last); legal T-071; marketing T-085.
 
 ### T-095 [gameplay] PetService small fixes: rename `equipped` local, UID_MAX = 1e12-1   (S)  sprint: 3  owner: gameplay-programmer
@@ -321,7 +322,7 @@ Acceptance criteria:
 - [ ] In `PetService.inventoryString` (src/server/Gameplay/PetService.luau, about line 159) rename the local table `equipped` (for example `isEquipped`) so `tests/static/check_authority.py` no longer flags it as a false positive; behaviour unchanged, PetInventory string identical
 - [ ] `UID_MAX` (line 35) becomes `1e12 - 1` so `tostring(uid)` never exceeds `PET_UID_MAX_LEN` (12); `Guard.clampFinite(nextUid, 1, UID_MAX, 1)` still used
 - [ ] `check_authority.py` run clean for PetService; selene and stylua clean
-Status: in-progress (sprint 3)
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac)
 
 ### T-032 [gameplay] QuestService tutorial chain   (M)  sprint: 3  owner: gameplay-programmer
 Depends on: T-009, T-010, T-011, T-028
@@ -329,7 +330,7 @@ Acceptance criteria:
 - [ ] Chain per GDD 9: win 5 more, Hair Gel, beat Benny, Ring Light Pod, Mask, rank-up, first egg; `QuestStep`, `TutorialDone`
 - [ ] `TutorialCompleted` unlocks duels and the Starter Pack pop-up timing
 - [ ] Runs first in sprint 3: duels need `TutorialCompleted`
-Status: in-progress (sprint 3)
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac)
 
 ### T-049 [gameplay] DuelService core (state machine, tap sink, scoring)   (M)  sprint: 3  owner: gameplay-programmer
 Depends on: T-008, T-032 (ring API T-059 is built in the same sprint)
@@ -337,21 +338,21 @@ Acceptance criteria:
 - [ ] Pending 10 s, Countdown 3 s, Active 8 s, Result, Rematch window; `DuelState` timestamps; tap sink clamped to 10/s and 80 total
 - [ ] Score = taps x (1 + 0.03 x min(own rank, opponent rank + 2)); pets, paid tier, VIP, boosts and auto-tap never read; Auto-Tap and Auto-Mog paused
 - [ ] Ring/pit positions come from `ZoneService` (T-059); no ragdoll logic here
-Status: in-progress (sprint 3)
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac)
 
 ### T-050 [gameplay] Duel rewards, anti-grief, rematch, forfeit   (M)  sprint: 3  owner: gameplay-programmer
 Depends on: T-049
 Acceptance criteria:
 - [ ] Reward 120 x best coins/s only under 5 per hour and 2 per opponent per 15 min; losers lose nothing
 - [ ] Cooldown 15 s, 1 pending outgoing, 3-decline mute, session block list, forfeit on leave, ring released
-Status: in-progress (sprint 3)
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac)
 
 ### T-052 [gameplay] RewardService: 7-day daily calendar   (S)  sprint: 3  owner: gameplay-programmer
 Depends on: T-007, T-028, T-012
 Acceptance criteria:
 - [ ] Server UTC day logic; missing a day restarts at D1; D1-D7 per GDD 10 (D5 Coin Snack is free; D7 cosmetic kept)
 - [ ] No paid item changes a daily coin or egg reward (VIP adds only 10 min Hype Snack)
-Status: in-progress (sprint 3)
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac)
 
 ### T-053 [gameplay] Robux grants: ladder (next-tier + fallback), VIP, Hype Snack, Auto Clicker, Starter Pack   (M)  sprint: 3  owner: gameplay-programmer
 Depends on: T-003, T-007, T-056
@@ -361,7 +362,7 @@ Acceptance criteria:
 - [ ] Hype Snack purchase blocked once the 2 h cap would be exceeded; Starter Pack once, with no coins, pod or egg
 - [ ] No grant touches coins, coin-shop items, rebirths or egg hatches (T-081 checks this)
 - [ ] Lean v1 (D-034): Speed Sneakers moves to Update 2 (already first on the cut list)
-Status: in-progress (sprint 3); prices approved (D-038). Go-live waits only for the owner to create the developer products
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac). Prices approved (D-038). Go-live waits only for the owner to create the developer products
 
 ### T-073 [gameplay] Robux-egg grants: server roll, saved pity, true odds, restricted fixed-pet fallback, fixed pet grants   (M)  sprint: 3  owner: gameplay-programmer
 Depends on: T-028, T-056, T-027
@@ -369,22 +370,22 @@ Acceptance criteria:
 - [ ] Star and Galaxy grants (1 and 3 packs); 10th hatch without Legendary+ forces Legendary 90 / Mythic 10; counter saved per egg; 3-pack counts in order
 - [ ] A restricted player's receipt grants the stated fixed pet (Starlight Corgi / Nebula Fox, 3 copies for a 3-pack) with a log, never a roll and never nothing; inventory may exceed 60 by up to 6
 - [ ] Ring Light Retriever grant only (Neon Pup moves to Update 2); no egg in any bundle
-Status: in-progress (sprint 3); prices approved (D-038). Go-live waits only for the owner to create the developer products
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac). Prices approved (D-038). Go-live waits only for the owner to create the developer products
 
 ### T-059 [world] ZoneService rings (World 1) and duel movement lock   (M)  sprint: 3  owner: world-programmer
 Depends on: T-038 (map art T-061 not required: code is nil-safe)
 Acceptance criteria:
 - [ ] `reserveRing/releaseRing/teleportToRing/getRingKnockback` (`teleportToWorld` moves to T-092); both rings can run at once; rings released on leave
 - [ ] CharacterService movement lock during duels
-Status: in-progress (sprint 3)
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac)
 
 ### T-056 [systems] MonetizationService core (ProcessReceipt, dedupe, RequestPurchase gate, grant registry)   (M)  sprint: 3  owner: systems-programmer
 Depends on: T-003, T-012, T-013, T-069
 Acceptance criteria:
-- [ ] The only `ProcessReceipt`; grant and receipt id in one `DataService.update`; granted only after the save that holds the id; unknown id gives NotYetProcessed
+- [ ] The only `ProcessReceipt`; grant and receipt id in one `DataService.update`; granted only after the save that holds the id; unknown id gives NotProcessedYet
 - [ ] `RequestPurchase` gates: FirstWin (prompt only), next ladder tier only, permanent items not owned, Robux eggs need `PaidRandomAllowed`; server-side prompt; every valid receipt is delivered even before FirstWin
 - [ ] Entitlement attributes and `EntitlementsChanged`
-Status: in-progress (sprint 3); prices approved (D-038). Go-live waits only for the owner to create the developer products
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac). Prices approved (D-038). Go-live waits only for the owner to create the developer products
 
 ### T-057 [systems] Robux shop UI (ladder, boosts, VIP, fixed pets, cosmetics, boost cap HUD)   (M)  sprint: 3  owner: systems-programmer
 Depends on: T-056, T-053
@@ -392,26 +393,26 @@ Acceptance criteria:
 - [ ] Only the next ladder tier is shown, with "Does not stack: the highest tier you own applies"; named "x2 Mog Points", never earnings or coins; "Permanent" labels
 - [ ] HUD shows boost time left and the 2 h cap; boost time stated as in-game only; "Exclusive", no "Limited"
 - [ ] Buttons hidden until FirstWin; no wall of buy buttons; Starter Pack pop-up once after the first rank-up
-Status: in-progress (sprint 3); prices approved (D-038). Go-live waits only for the owner to create the developer products
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac). Prices approved (D-038). Go-live waits only for the owner to create the developer products
 
 ### T-058 [systems] Robux egg UI (odds, pity text, true odds at 9/10, restricted stand text)   (M)  sprint: 3  owner: systems-programmer
 Depends on: T-056, T-035
 Acceptance criteria:
 - [ ] Odds on the egg UI and in the confirmation step; pity rule written out; counter "Pity: 7/10" saved per egg; at 9/10 the real next-hatch odds replace the table; 3-pack lists odds per hatch; "Odds Info" button label
 - [ ] Restricted players see "Robux eggs aren't available on your account" and the stated fixed pet text, with no buy button
-Status: in-progress (sprint 3); prices approved (D-038). Go-live waits only for the owner to create the developer products
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac). Prices approved (D-038). Go-live waits only for the owner to create the developer products
 
 ### T-054 [systems] DuelController UI   (M)  sprint: 3  owner: systems-programmer
 Depends on: T-049, T-050
 Acceptance criteria:
 - [ ] Challenge button on players, accept and decline with a 10 s timer, countdown, tap-off HUD, result, rematch, block; text "Out-glowed! Rematch?" only
-Status: in-progress (sprint 3)
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac)
 
 ### T-055 [systems] RewardsController (daily calendar UI)   (S)  sprint: 3  owner: systems-programmer
 Depends on: T-052
 Acceptance criteria:
 - [ ] 7-day calendar with claim button and next-claim time; no codes box in v1 (T-074 is Update 2)
-Status: in-progress (sprint 3)
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac)
 
 ### T-066 [physics] RagdollController (duel knockback) and ring effects, code-only   (M)  sprint: 3  owner: physics-programmer
 Depends on: T-049 (map art T-061 not required)
@@ -419,20 +420,20 @@ Acceptance criteria:
 - [ ] Local player's own 2.5 s cartoon ragdoll into the foam pit only when the server names that user; always recovers; no ragdoll outside rings
 - [ ] Draw bounce effect; winner pose banner
 - [ ] Code-only: ring and pit positions read from MapLayout; Studio tuning with the real ring is T-089 (Mac)
-Status: in-progress (sprint 3)
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac)
 
 ### T-068 [qa] Duel and reward exploit tests   (M)  sprint: 3  owner: qa
 Depends on: T-050, T-052
 Acceptance criteria:
 - [ ] Tap-flood in duels, win-trading with two accounts, forfeit abuse, daily claim replay, challenge spam; none give unearned rewards
-Status: in-progress (sprint 3)
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac)
 
 ### T-081 [qa] Coin-firewall test and purchase-flow tests (incl. restricted receipts)   (M)  sprint: 3  owner: qa
 Depends on: T-053, T-073, T-056
 Acceptance criteria:
 - [ ] Test walks every product's grant function and fails if any touches coins, coin-shop items, rebirth count or egg hatches (GDD 8g)
 - [ ] Receipt tests: duplicate receipt, receipt before FirstWin, non-next-tier receipt gives Hype Snack only (no tier climb), boost cap, restricted-player egg receipt; all grant exactly once
-Status: in-progress (sprint 3); prices approved (D-038). Go-live waits only for the owner to create the developer products
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac). Prices approved (D-038). Go-live waits only for the owner to create the developer products
 
 ### T-069 [integration] ProductCatalog.luau (23 keys, product ids, grant kinds, price labels)   (S)  sprint: 3  owner: integration-programmer
 Depends on: T-003
@@ -440,19 +441,19 @@ Acceptance criteria:
 - [ ] Every key maps to an id the owner created in Creator Hub (ids entered by the owner; none in repo secrets), grant kind and price label matching the approved prices
 - [ ] Count is 23 and the file is the only place with ids
 - [ ] D-038 approved 15 of the 23 products (ladder x2/x4/x8/x16/x32 = 4/8/19/39/79, Hype Snack 2, Starter Pack 9, Ring Light Retriever 29, Auto Clicker 39, VIP 99, Golden Glow Fit 249, Star Egg 25 / 3-pack 69, Galaxy Egg 49 / 3-pack 129). Speed Sneakers, Neon Pup, Neon Icon Fit and 5 tips are not approved: flag them `offered = false` in the catalog and never prompt them
-Status: in-progress (sprint 3); prices approved (D-038). Build with placeholder id 0 and a validator that refuses purchases on id 0; the owner creates the 15 approved developer products in Creator Hub and enters ids
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac). Prices approved (D-038). Build with placeholder id 0 and a validator that refuses purchases on id 0; the owner creates the 15 approved developer products in Creator Hub and enters ids
 
 ### T-072 [integration] Sprint 3 merge   (S)  sprint: 3  owner: integration-programmer
 Depends on: T-049..T-069 (all sprint 3 tickets)
 Acceptance criteria:
 - [ ] Merge to `main`; two real players can duel; the portal shows "World 2 coming Saturday"; the daily reward claims
-Status: in-progress (sprint 3)
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac)
 
 ### T-071 [legal] Review product listings, descriptions and maturity questionnaire answers   (S)  sprint: 3  owner: lawyer
 Depends on: T-057, T-058
 Acceptance criteria:
 - [ ] Listing text checked against GDD 8 rules (e), (h), (i); no claim that money can't affect PvP (paid MP speeds up rank, up to +6% duel edge, D-019 #4); the odds text; the questionnaire answer "paid random items: yes"; result in docs/legal.md
-Status: in-progress (sprint 3); unblocked by D-038
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac); unblocked by D-038
 
 ### T-085 [marketing] Launch kit (lean)   (M)  sprint: 3  owner: marketer
 Depends on: none (T-084 runs in the Mac session)
@@ -460,25 +461,37 @@ Acceptance criteria:
 - [ ] docs/marketing/ has: description (the word "mog" only here and in tags; no "looksmax"), tags, update-note template for numbered weekly updates, code-post wording (milestone wording rule), thumbnail and icon brief, 3 short video or social clips outline, Saturday event announcement templates
 - [ ] No competitor names or "Minimal" claim; no ad spend (gate 3)
 - [ ] Lean v1 (D-034): update-note template, clip outline and Saturday event templates move to Update 2
-Status: in-progress (sprint 3)
+Status: done in code (merged to main, D-069/D-071, build 3; Studio checks pending on the Mac)
 
 ---
 
-gal.md
-Status: in-progress (sprint 3); unblocked by D-038
-
-### T-085 [marketing] Launch kit (lean)   (M)  sprint: 3  owner: marketer
-Depends on: none (T-084 runs in the Mac session)
+### CR-I8 [integration] Post-commit grant hook (`GrantFn` returns `OnCommitted`)   (S)  sprint: 3  owner: integration-programmer
+Depends on: T-056, T-053, T-073
 Acceptance criteria:
-- [ ] docs/marketing/ has: description (the word "mog" only here and in tags; no "looksmax"), tags, update-note template for numbered weekly updates, code-post wording (milestone wording rule), thumbnail and icon brief, 3 short video or social clips outline, Saturday event announcement templates
-- [ ] No competitor names or "Minimal" claim; no ad spend (gate 3)
-- [ ] Lean v1 (D-034): update-note template, clip outline and Saturday event templates move to Update 2
-Status: in-progress (sprint 3)
+- [ ] Contract in architecture section 8 CR-I8 and 3c step 5 (done, D-071): `GrantFn = (player, key, data) -> (boolean, OnCommitted?)`; hook runs once, only after `confirmSaved`, dropped on PlayerRemoving
+- [ ] systems: MonetizationService runs the hook (Success toast and Purchase effect move to it); gameplay: PetService `grantRobuxEgg` sends HatchResult and fires `Hatched` from the hook (closes QA-14)
+- [ ] qa re-runs Purchase.spec and check_grants.py after both land
+Status: in-progress (contract merged D-071; systems and gameplay implementing; QA-14 stays open until then)
 
----
+## Mac session (owner at the Mac with Studio, about 3 h hands-on, about 7.5 h elapsed with agent time)
+Ordered checklist. Times are estimates; "agent" time runs while the owner does something else. Gates: 2 (fun playtest, step 9), 3 (no spend), 5 (product ids, step 8), 4 (publish, step 12). Ticket details follow below.
 
-## Mac session (owner at the Mac with Studio, about 3 h)
-All [art] tickets, ragdoll/camera work that needs models, the Studio full-game run, the qa playtest, the owner playtest (gate 2) and the owner publish (gate 4). Order: T-001/T-002 and /toolcheck, T-018..T-020, T-039..T-042, T-061, T-065, T-094, T-022/T-023/T-089, T-082/T-083, T-084, owner playtest, T-087 fixes, T-086, T-080 icon, owner publishes.
+| # | Step | Who | Est. | Tickets / notes |
+|---|---|---|---|---|
+| 1 | Clone github.com/DBctrl/roblox-games, run Claude Code on the Mac, setup per docs/setup.md, then `/toolcheck` | owner | 20 min | Rojo plugin, Studio MCP, `./scripts/doctor.sh`. Blocks everything below |
+| 2 | API verify: ProfileStore via Wally, AnalyticsService signatures | integration | 30 min agent | T-001, T-002 |
+| 3 | Builder art with simple parts (D-034): hub, bosses, pods, egg stands incl. **GalaxyEggStand** (World 1, next to Star Egg, `EggId = "GalaxyEgg"`, D-057), **2 MogRings** (`RingIndex` 1/2, `Side1`, `Side2`, `Pit`), rank looks, pets, and the **WeekStreakAura** fit (D-069). Owner saves the place afterwards (D-003) | builder + owner save | 90 min agent, 5 min owner | T-018..T-020, T-039..T-042, T-061, T-065. WeekStreakAura was on the cut list: it is now needed for the Day-7 reward (CR-G7), keep it as a simple part; T-079 stays Update 2 for the rest |
+| 4 | Physics Studio tuning: boss ragdoll, spawn pan, duel ragdoll in the real ring | physics | 45 min agent | T-022, T-023, T-089 |
+| 5 | Full-game run: Rojo sync, two-client play-through, rejoin keeps data; CR-I8 hook check | integration | 45 min agent | T-094 (needs steps 2-4 and CR-I8 landed) |
+| 6 | qa Studio specs (SKIPping Play-mode specs, QA-1/QA-2 UI recheck, QA-13/QA-14 recheck) and regression | qa | 60 min agent | T-082, T-083 |
+| 7 | Lawyer pre-launch check: live Community Standards, DevForum post, paid-random policy | lawyer (owner or team-lead reads the live pages) | 30 min | T-084 |
+| 8 | Owner creates the **15 developer products** in Creator Hub and pastes the ids (docs/architecture.md section 4f); integration fills `ProductCatalog` and re-runs the id validator | owner, then integration | 25 min owner + 10 min agent | T-069 follow-up. No ids in secrets. Gate 5 already given in D-038 |
+| 9 | Owner fun playtest, under 30 min, notes into docs/qa/ | owner (gate 2) | 30 min | `/playtest`. Agents never judge fun |
+| 10 | Fixes from qa and the playtest; value changes only for balance | gameplay + owners of each folder | 60 min agent | T-087 |
+| 11 | Release candidate: merge, tag, owner-steps checklist (save place, questionnaire, group, age check) | integration | 20 min agent | T-086, T-080 icon |
+| 12 | Owner publishes | owner (gate 4) | 15 min | Only the owner publishes |
+
+Tickets for this section (T-087 and T-086 depend on the playtest and qa results):
 
 ### T-001 [integration] Verify ProfileStore API and add via Wally   (S)  sprint: Mac  owner: integration-programmer
 Depends on: owner `/toolcheck` pass
@@ -778,7 +791,7 @@ Not used: the owner chose option A (D-021). Kept for reference only.
 ## Cut list (moved out of v1; first to go if the Mac session overruns)
 1. Update 1 (Saturday): all World 2 work (see section above).
 2. Update 2 / later: T-037 leaderboards (leaderstats stay), T-067 mobile effects pass, T-070 16+ audience plan, T-074 codes, T-075 donations and Top Donors, T-076 Crew Cap, T-077 UI polish, T-078 streaming pass, T-079 exclusive cosmetics.
-3. Speed Sneakers, Neon Pup, Week Streak Aura, VIP Sparkle Aura.
+3. Speed Sneakers, Neon Pup, VIP Sparkle Aura (Week Streak Aura is back in v1 as a simple part, D-072).
 4. If sprint 3 overruns, cut in this order: hatch x3 and equip-best, Starter Pack pop-up, T-050 anti-grief extras (keep reward caps), rank looks 7-12 (T-041).
 5. If monetization stays blocked past the Mac session: ship v1 free-only, keep T-053, T-056..T-058, T-069, T-073, T-081 for the next update (a GDD pillar change, so escalate first).
 6. From GDD section 12 "Not in v1": trading, pet fusing, ranked ELO, Ascend, co-op bosses, runway slots, MP packs, potions, enchants, friend referrals, Discord links; weekly events and World 3.
