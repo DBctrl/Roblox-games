@@ -241,10 +241,10 @@ function GameData.autoMogRebirths(): number
 	return num(economy and economy.AUTO_MOG_REBIRTHS, DEFAULT_AUTO_MOG_REBIRTHS)
 end
 
--- Hatch x3 unlock (GDD 5: Rebirth 2). TODO(CR-S2b): the constant's name is not in architecture 1c yet.
+-- Hatch x3 unlock (GDD 5: Rebirth 2): EconomyConfig.HATCH_MULTI_REBIRTHS (CR-S2b, D-051).
 function GameData.hatchThreeRebirths(): number
 	ensure()
-	return num(economy and (economy.HATCH_X3_REBIRTHS or economy.HATCH3_REBIRTHS), DEFAULT_HATCH3_REBIRTHS)
+	return num(economy and economy.HATCH_MULTI_REBIRTHS, DEFAULT_HATCH3_REBIRTHS)
 end
 
 -- Rebirth counts that each add a pet slot (GDD 5: 3 and 8).
@@ -264,6 +264,7 @@ end
 
 local DEFAULT_ODDS_TOTAL = 10000
 local DEFAULT_INVENTORY_CAP = 60
+local DEFAULT_INVENTORY_HARD_CAP = 66
 
 function GameData.oddsTotal(): number
 	ensure()
@@ -273,6 +274,12 @@ end
 function GameData.inventoryCap(): number
 	ensure()
 	return num(economy and economy.INVENTORY_CAP, DEFAULT_INVENTORY_CAP)
+end
+
+-- Most pets a profile can hold (paid receipts may pass INVENTORY_CAP, architecture 4b). Bounds PetInventory.
+function GameData.inventoryHardCap(): number
+	ensure()
+	return num(economy and economy.INVENTORY_HARD_CAP, DEFAULT_INVENTORY_HARD_CAP)
 end
 
 -- Egg `eggId` from EconomyConfig.EGGS (T-027), read as-is: the UI shows exactly the weights the server rolls.

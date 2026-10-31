@@ -1,12 +1,11 @@
 --!strict
 -- Read-only view of the local player's pets for the UI (helper, not a controller). Owned by systems-programmer.
 --
--- The client needs pet uids to equip and delete, but architecture 1e only replicates `EquippedPets` (pet ids)
--- and `PetCount`. Contract request CR-S2a asks for one more PetService attribute:
---   `PetInventory` (string): comma-separated `uid:petId:e` entries, e = 1 if equipped, else 0.
---   Example "1:PuffPup:1,2:BubbleBunny:0". Rewritten after every hatch, grant, equip, unequip and delete.
--- Until it exists (TODO(CR-S2a)), `entries()` returns nil and the UI says the inventory is syncing; "you own"
--- ticks fall back to EquippedPets plus pets hatched this session (from HatchResult).
+-- Reads `Types.PlayerAttr.PetInventory` (CR-S2a, D-051, architecture 1e), written only by PetService:
+--   comma-separated `uid:petId:e` entries, e = "1" if equipped, else "0", sorted by numeric uid, no spaces,
+--   "" when empty, at most INVENTORY_HARD_CAP (66) entries. Example "1:PuffPup:1,2:BubbleBunny:0".
+-- While the attribute is missing (not written yet) or malformed, `entries()` returns nil and the UI says the
+-- inventory is syncing; "you own" ticks fall back to EquippedPets plus pets hatched this session.
 -- Everything here is display only. The server re-checks every uid it receives.
 
 local Players = game:GetService("Players")
@@ -15,14 +14,14 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Types =
 	require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Contracts"):WaitForChild("Types"))
 
+local GameData = require(script.Parent:WaitForChild("GameData"))
+
 local Attr = Types.PlayerAttr
 
 local PetInventory = {}
 
--- TODO(CR-S2a): use Types.PlayerAttr.PetInventory once integration adds it.
-PetInventory.ATTR = ((Attr :: any).PetInventory :: string?) or "PetInventory"
+PetInventory.ATTR = Attr.PetInventory
 
-local MAX_ENTRIES = 80 -- hard cap 66 plus slack; anything longer is ignored
 local MAX_UID_LEN = 12
 local MAX_ID_LEN = 40
 
@@ -30,7 +29,9 @@ export type Entry = { uid: string, petId: string, equipped: boolean }
 
 local sessionHatched: { [string]: boolean } = {}
 
--- Parses the PetInventory attribute; nil if it is missing or malformed.
+-- Parses the PetInventory attribute; nil if it is missing or malformed. Malformed: more than
+-- INVENTORY_HARD_CAP entries, an entry that is not `uid:petId:0|1`, a uid that is not a positive integer, or
+-- uids not strictly increasing (the writer sorts by numeric uid, so a duplicate uid is malformed too).
 function PetInventory.entries(): { Entry }?
 	local raw = Players.LocalPlayer:GetAttribute(PetInventory.ATTR)
 	if type(raw) ~= "string" then
@@ -40,23 +41,30 @@ function PetInventory.entries(): { Entry }?
 	if raw == "" then
 		return out
 	end
-	for _, item in string.split(raw, ",") do
+	local items = string.split(raw, ",")
+	if #items > GameData.inventoryHardCap() then
+		return nil
+	end
+	local lastUid = 0
+	for _, item in items do
 		local parts = string.split(item, ":")
 		local uid, petId, flag = parts[1], parts[2], parts[3]
 		if
 			#parts ~= 3
-			or uid == ""
 			or #uid > MAX_UID_LEN
+			or string.match(uid, "^[1-9]%d*$") == nil
 			or petId == ""
 			or #petId > MAX_ID_LEN
 			or (flag ~= "0" and flag ~= "1")
 		then
 			return nil
 		end
-		table.insert(out, { uid = uid, petId = petId, equipped = flag == "1" })
-		if #out > MAX_ENTRIES then
+		local uidNum = tonumber(uid) :: number
+		if uidNum <= lastUid then
 			return nil
 		end
+		lastUid = uidNum
+		table.insert(out, { uid = uid, petId = petId, equipped = flag == "1" })
 	end
 	return out
 end
