@@ -122,7 +122,8 @@ local function award(player: Player, boss: Boss, auto: boolean)
 	end
 
 	local coins = math.floor(boss.coins * MultiplierService.getCoinMultiplier(player))
-	local added = dataApi.addCoins(player, coins, "BossWin")
+	-- addCoins returns the new BALANCE (or 0 on failure), so report the amount won, not the balance (QA-8).
+	local added = if dataApi.addCoins(player, coins, "BossWin") > 0 then coins else 0
 	local firstWinNow = false
 	dataApi.update(player, function(d)
 		d.stats.bossWins += 1
@@ -135,7 +136,9 @@ local function award(player: Player, boss: Boss, auto: boolean)
 
 	bossWonEvent:Fire(player, boss.id, added, auto)
 	playWinEffect(player, boss, added)
-	Deps.economy(player, "Source", added, "BossWin")
+	if added > 0 then
+		Deps.economy(player, "Source", added, "BossWin")
+	end
 	if firstWinNow then
 		Deps.funnel(player, "FirstWin")
 	end
