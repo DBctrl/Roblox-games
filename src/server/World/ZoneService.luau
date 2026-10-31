@@ -2,13 +2,17 @@
 -- ZoneService (T-016 core). Owned by world-programmer. Server only.
 -- Current world per player (`WorldId`, `World2Unlocked`, `CurrentPod` attributes), spawn placement,
 -- boss-stage / stand lookup and server distance checks. Map names come only from Shared.World.MapLayout.
--- Later tickets: pod presence + portal + isNearEggStand (T-038), rings + teleportToWorld (T-059).
+-- T-038: server pod presence (`CurrentPod`, `PodChanged`), the World 2 portal sign (Touched shows
+-- "World 2 coming Saturday!" and never teleports; teleport = T-092) and isNearEggStand.
+-- Later tickets: rings + teleportToWorld (T-059).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local MapLayout = require(Shared:WaitForChild("World"):WaitForChild("MapLayout"))
+local Remotes = require(Shared:WaitForChild("Contracts"):WaitForChild("Remotes"))
 local Types = require(Shared:WaitForChild("Contracts"):WaitForChild("Types"))
 
 local PlayerAttr = Types.PlayerAttr
@@ -38,6 +42,13 @@ local MAX_BOSS_ID_LEN = 32
 local SPAWN_SNAP_DISTANCE = 30 -- re-place a new character only if Roblox spawned it this far away
 local SPAWN_SPREAD = 4 -- random XZ offset so players do not stack on one spot
 local ROOT_WAIT_SEC = 5
+local MAX_EGG_ID_LEN = 32
+local POD_CHECK_INTERVAL = 0.5 -- seconds between server pod presence checks
+local POD_PAD = 1 -- studs of slack around each pod box
+local MAX_POD_INDEX = 7
+local PORTAL_PAD = 6 -- touching player's root must be this close to the portal box (anti-spoof)
+local PORTAL_NOTICE_COOLDOWN = 5 -- seconds between portal notices per player
+local PORTAL_NOTICE_TEXT = "World 2 coming Saturday!"
 
 type DataServiceLike = {
 	ProfileLoaded: RBXScriptSignal,
@@ -51,6 +62,10 @@ local podChangedEvent: BindableEvent
 local interactRange = DEFAULT_INTERACT_RANGE
 local worldOf: { [Player]: Types.WorldId } = {}
 local podOf: { [Player]: number } = {}
+local podParts: { [Instance]: true } = {} -- tagged Pod items in Workspace (the server sees all)
+local portalConns: { [Instance]: { RBXScriptConnection } } = {}
+local lastPortalNotice: { [Player]: number } = {}
+local notifyRemote: RemoteEvent? = nil
 local dataService: DataServiceLike? = nil
 local warnedMissing: { [string]: true } = {} -- map ids already reported missing (warn once each)
 
@@ -160,6 +175,142 @@ end
 local function onPlayerRemoving(player: Player)
 	worldOf[player] = nil
 	podOf[player] = nil
+	lastPortalNotice[player] = nil
+end
+
+-- Pod presence ----------------------------------------------------------------------------------
+
+-- World of a pod: its WorldId attribute, else the layout table (pods 1..5 = W1, 6..7 = W2).
+local function podWorld(inst: Instance, podIndex: number): number?
+	local attrWorld = MapLayout.getWorldIdOf(inst)
+	if attrWorld ~= nil then
+		return attrWorld
+	end
+	for worldId, world in MapLayout.WORLDS do
+		if world.pods[podIndex] ~= nil then
+			return worldId
+		end
+	end
+	return nil
+end
+
+-- Pod the player stands in now (highest PodIndex wins if boxes overlap), 0 = none. Presence only:
+-- IdleService checks ownership (PodsMask) before paying MP/s.
+local function findPod(player: Player): number
+	local pos = ZoneService.getCharacterPosition(player)
+	if pos == nil then
+		return 0
+	end
+	local worldId = ZoneService.getWorld(player)
+	local best = 0
+	for inst in podParts do
+		local index = MapLayout.getPodIndexOf(inst)
+		if
+			index ~= nil
+			and index > best
+			and index == math.floor(index)
+			and index <= MAX_POD_INDEX
+			and podWorld(inst, index) == worldId
+			and MapLayout.isInsideBox(inst, pos, POD_PAD)
+		then
+			best = index
+		end
+	end
+	return best
+end
+
+local function setPod(player: Player, podIndex: number)
+	if podOf[player] == nil or podOf[player] == podIndex then
+		return
+	end
+	podOf[player] = podIndex
+	player:SetAttribute(PlayerAttr.CurrentPod, podIndex)
+	podChangedEvent:Fire(player, podIndex)
+end
+
+local function updatePods()
+	for _, player in Players:GetPlayers() do
+		setPod(player, findPod(player))
+	end
+end
+
+-- Portal sign (lean v1, D-034) --------------------------------------------------------------------
+
+local function playerFromHit(hit: BasePart): Player?
+	local model = hit:FindFirstAncestorOfClass("Model")
+	while model ~= nil do
+		local player = Players:GetPlayerFromCharacter(model)
+		if player then
+			return player
+		end
+		model = model:FindFirstAncestorOfClass("Model")
+	end
+	return nil
+end
+
+local function onPortalTouched(portal: Instance, hit: BasePart)
+	local player = playerFromHit(hit)
+	if player == nil then
+		return
+	end
+	local target = MapLayout.getPortalTarget(portal)
+	if target == nil or not MapLayout.isValidWorld(target) or target == ZoneService.getWorld(player) then
+		return
+	end
+	-- Touched comes from the client that owns the character's physics, so confirm the position.
+	local pos = ZoneService.getCharacterPosition(player)
+	if pos == nil or not MapLayout.isInsideBox(portal, pos, PORTAL_PAD) then
+		return
+	end
+	local now = os.clock()
+	local last = lastPortalNotice[player]
+	if last ~= nil and now - last < PORTAL_NOTICE_COOLDOWN then
+		return
+	end
+	lastPortalNotice[player] = now
+	-- Never teleports in v1. World travel (unlock check + teleportToWorld) is T-092 (Update 1).
+	if notifyRemote then
+		local payload: Types.NotifyPayload = { kind = "Info", text = PORTAL_NOTICE_TEXT, durationSec = 3 }
+		notifyRemote:FireClient(player, payload)
+	end
+end
+
+local function onPortalAdded(portal: Instance)
+	if portalConns[portal] then
+		return
+	end
+	local parts: { BasePart } = {}
+	if portal:IsA("BasePart") then
+		table.insert(parts, portal)
+	end
+	for _, d in portal:GetDescendants() do
+		if d:IsA("BasePart") then
+			table.insert(parts, d)
+		end
+	end
+	if #parts == 0 then
+		warn(`[ZoneService] Portal "{portal:GetFullName()}" has no part to touch`)
+	end
+	local conns = {}
+	for _, part in parts do
+		table.insert(
+			conns,
+			part.Touched:Connect(function(hit: BasePart)
+				onPortalTouched(portal, hit)
+			end)
+		)
+	end
+	portalConns[portal] = conns
+end
+
+local function onPortalRemoved(portal: Instance)
+	local conns = portalConns[portal]
+	if conns then
+		for _, conn in conns do
+			conn:Disconnect()
+		end
+		portalConns[portal] = nil
+	end
 end
 
 -- Public API ------------------------------------------------------------------------------------
@@ -182,18 +333,39 @@ function ZoneService:Start()
 			applyProfile(player, data)
 		end)
 	end
+	local okRemote, remote = pcall(Remotes.getEvent, "Notify")
+	notifyRemote = if okRemote then remote :: RemoteEvent else nil
+	if notifyRemote == nil then
+		warn("[ZoneService] Notify remote missing; the portal sign shows nothing")
+	end
 	Players.PlayerAdded:Connect(onPlayerAdded)
 	Players.PlayerRemoving:Connect(onPlayerRemoving)
 	for _, player in Players:GetPlayers() do
 		task.spawn(onPlayerAdded, player)
 	end
+	MapLayout.observe("Pod", function(inst)
+		podParts[inst] = true
+	end, function(inst)
+		podParts[inst] = nil
+	end)
+	MapLayout.observe("Portal", onPortalAdded, onPortalRemoved)
+	local elapsed = 0
+	RunService.Heartbeat:Connect(function(dt: number)
+		elapsed += dt
+		if elapsed < POD_CHECK_INTERVAL then
+			return
+		end
+		elapsed = 0
+		updatePods()
+	end)
 end
 
 function ZoneService.getWorld(player: Player): Types.WorldId
 	return worldOf[player] or 1
 end
 
--- Pod presence arrives in T-038; until then nobody is in a pod.
+-- Pod (PodIndex) the player stands in, 0 = none. Server zone check every 0.5 s. Presence only:
+-- callers check ownership themselves.
 function ZoneService.getPod(player: Player): number
 	return podOf[player] or 0
 end
@@ -256,6 +428,37 @@ function ZoneService.isNearBoss(player: Player, bossId: string): boolean
 		return false
 	end
 	return (playerPos - stagePos).Magnitude <= interactRange + RANGE_SLACK
+end
+
+-- True when the player is alive, in the egg's world, and within INTERACT_RANGE (+ slack) of its
+-- stand. Safe with untrusted input. A missing stand falls back to the layout (warned once).
+function ZoneService.isNearEggStand(player: Player, eggId: Types.EggId): boolean
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return false
+	end
+	if typeof(eggId) ~= "string" or #eggId == 0 or #eggId > MAX_EGG_ID_LEN then
+		return false
+	end
+	local eggWorld = MapLayout.getEggWorld(eggId)
+	if eggWorld == nil or eggWorld ~= ZoneService.getWorld(player) then
+		return false
+	end
+	local stand = MapLayout.getEggStand(eggId)
+	if stand == nil then
+		warnMissingOnce("EggStand", eggId)
+	else
+		local standWorld = MapLayout.getWorldIdOf(stand)
+		if standWorld ~= nil and standWorld ~= eggWorld then
+			warnMissingOnce(`EggStand in WorldId {eggWorld}`, eggId)
+			return false
+		end
+	end
+	local standPos = MapLayout.getEggStandPosition(eggId)
+	local playerPos = ZoneService.getCharacterPosition(player)
+	if standPos == nil or playerPos == nil then
+		return false
+	end
+	return (playerPos - standPos).Magnitude <= interactRange + RANGE_SLACK
 end
 
 return ZoneService
