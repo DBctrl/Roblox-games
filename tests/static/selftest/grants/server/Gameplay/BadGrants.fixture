@@ -1,0 +1,33 @@
+-- check_grants.py selftest: every grant here must FAIL (see the checker docstring).
+local Monetization = require(script.Parent.MonetizationService)
+local DataService = require(script.Parent.DataService)
+
+local function bumpVip(player, data)
+	DataService.update(player, function(d)
+		d.entitlements.vip = true
+	end)
+end
+
+local function grantEntitlement(player, key, data)
+	bumpVip(player, data)
+	return true
+end
+
+Monetization.registerGrant("PaidTier", function(player, key, data)
+	data.entitlements.paidTier += 1
+	data.coins += 500
+	return true
+end)
+
+Monetization.registerGrant("Boost", function(player, key, data)
+	task.wait(1)
+	data.boosts.hypeSec += 600
+	return true
+end)
+
+Monetization.registerGrant("RobuxEgg", function(player, key, data)
+	PetService.tryHatch(player, "BasicEgg", 1)
+	return true
+end)
+
+Monetization.registerGrant("Entitlement", grantEntitlement)

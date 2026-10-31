@@ -1,0 +1,8 @@
+-- check_grants.py selftest: FAILs once for the invented enum item; ProcessReceipt is not assigned (PENDING).
+local function answer(ok)
+	if ok then
+		return Enum.ProductPurchaseDecision.PurchaseGranted
+	end
+	return Enum.ProductPurchaseDecision.NotYetProcessed
+end
+return answer

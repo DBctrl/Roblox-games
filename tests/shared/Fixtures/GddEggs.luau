@@ -82,7 +82,7 @@ local GddEggs: { [string]: GddEgg } = {
 	},
 	GalaxyEgg = {
 		name = "Galaxy Egg",
-		world = 2,
+		world = 1, -- GDD rev 3 (D-058): moved from World 2 to World 1; odds unchanged
 		currency = "Robux",
 		restrictedGrant = "Nebula Fox",
 		pets = {
