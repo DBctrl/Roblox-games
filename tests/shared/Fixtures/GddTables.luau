@@ -47,7 +47,7 @@ GddTables.BOSSES = {
 
 GddTables.RANKS = {
 	{ rank = 1, name = "Fresh Spawn", lifetime = 0 },
-	{ rank = 2, name = "Comb Rookie", lifetime = 2500 },
+	{ rank = 2, name = "Comb Rookie", lifetime = 1800 },
 	{ rank = 3, name = "Glow Starter", lifetime = 15000 },
 	{ rank = 4, name = "Drip Apprentice", lifetime = 60000 },
 	{ rank = 5, name = "Style Scout", lifetime = 250000 },

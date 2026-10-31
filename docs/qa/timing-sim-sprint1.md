@@ -48,3 +48,14 @@ together cover "config = GDD = timings". Not a fun judgement: timings only._
 All first-5-minute targets pass at 5 taps/s. At 3 taps/s the first rank-up misses 5 min when the pod does not
 count while fighting. Findings QA-F1 to QA-F3 in `docs/qa/bugs.md` go back to scenarist (GDD 4.7) and builder (pod
 placement). Long-run checks (R2, R3 + World 2, R10) are T-047 in sprint 2, after pods, rebirth and pets exist.
+
+## Rev 2 rerun (build 1, 2026-10-31, D-033)
+The sim now uses GDD rev 2 (Rank 2 at 1,800 lifetime MP), `GDD_TIMES` holds the rev 2 4.7 times (5 taps/s, pod
+counts column), and the first-rebirth band is split by rate: 10:30-12:00 at 5 taps/s, 12:30-15:00 at 3 taps/s.
+`tests/shared/Fixtures/GddTables.luau` was regenerated (only Rank 2 changed).
+- Rank 2 confirmed: 2:47 / 3:16 at 5 taps/s and 3:42 / 4:36 at 3 taps/s (GDD says 2:48 / 3:16 and 3:42 / 4:36).
+  Every "< 5 min" check passes. QA-F1 is closed on the GDD side.
+- First rebirth: 10:41 / 11:46 at 5 taps/s (in band). At 3 taps/s, 14:48 is in band but **12:28 (pod counts) is
+  2 s under 12:30**: the GDD's own table says 12:28 next to a 12:30 band. Filed as QA-F6 (wording, scenarist).
+- The in-game config still has Rank 2 at 2,500 (`EconomyConfig.RANKS[2]`), so the game itself still has the rev 1
+  timing until gameplay-programmer applies D-033 (QA-10). The Studio spec "RANKS match GDD 7" fails until then.

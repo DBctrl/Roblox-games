@@ -45,29 +45,32 @@ DT = 0.05
 LIMIT = 40 * 60.0
 
 # GDD targets (4.7 Check column, 9) in seconds: (label, event key, max seconds or (min, max))
+# (label, event, (lo, hi) seconds, taps/s the target applies to; None = every rate)
 TARGETS = [
-    ("First boss win < 60 s", "first_win", (0, 60)),
-    ("First upgrade (Hair Gel) < 2 min", "tool_2", (0, 120)),
-    ("First idle station (Ring Light Pod) < 3 min", "pod_1", (0, 180)),
-    ("First rank-up (Rank 2) < 5 min", "rank_2", (0, 300)),
-    ("First rebirth in the 4.7 check column ~10-15 min", "rebirth_1", (600, 900)),
-    ("First rebirth in the 4.7 design band 12:00-14:00 (T-024 criterion)", "rebirth_1", (720, 840)),
+    ("First boss win < 60 s", "first_win", (0, 60), None),
+    ("First upgrade (Hair Gel) < 2 min", "tool_2", (0, 120), None),
+    ("First idle station (Ring Light Pod) < 3 min", "pod_1", (0, 180), None),
+    ("First rank-up (Rank 2) < 5 min", "rank_2", (0, 300), None),
+    ("First rebirth in the 4.7 check column ~10-15 min", "rebirth_1", (600, 900), None),
+    # GDD rev 2 (D-033, 4.7): first-rebirth band 10:30-12:00 at 5 taps/s, 12:30-15:00 at 3 taps/s
+    ("First rebirth in the rev 2 band 10:30-12:00 (5 taps/s)", "rebirth_1", (630, 720), {5}),
+    ("First rebirth in the rev 2 band 12:30-15:00 (3 taps/s)", "rebirth_1", (750, 900), {3}),
 ]
 
 # GDD 4.7 table times, for the "GDD says" column
-GDD_TIMES = {
-    "first_win": 38,
-    "tool_2": 65,
+GDD_TIMES = {  # rev 2 (D-033): the 5 taps/s "pod counts" column of GDD 4.7
+    "first_win": 36,
+    "tool_2": 56,
     "boss_Bedhead Benny": 102,
-    "pod_1": 125,
-    "tool_3": 185,
-    "rank_2": 220,
-    "boss_Sweatband Sal": 245,
-    "egg_basic": 270,
-    "tool_4": 360,
-    "boss_Captain Cardio": 510,
-    "rank_3": 550,
-    "rebirth_1": 780,
+    "pod_1": 126,
+    "tool_3": 183,
+    "rank_2": 168,
+    "boss_Sweatband Sal": 220,
+    "egg_basic": 236,
+    "tool_4": 330,
+    "boss_Captain Cardio": 432,
+    "rank_3": 480,
+    "rebirth_1": 641,
 }
 
 
@@ -320,10 +323,10 @@ def main() -> int:
 
     print()
     failed = 0
-    for label, key, (lo, hi) in TARGETS:
+    for label, key, (lo, hi), rates in TARGETS:
         cells = []
         for tps, plabel, pname, ev in runs:
-            if pname != "4.7 order":
+            if pname != "4.7 order" or (rates is not None and int(tps) not in rates):
                 continue
             v = ev.get(key)
             ok = v is not None and lo <= v <= hi
