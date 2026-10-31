@@ -91,7 +91,7 @@ local handlers: { [Types.EffectId]: Handler } = {
 		burst(celebratePool, spot, EffectsConfig.Celebrate.Purchase)
 	end,
 	-- RankUp: CinematicController (T-043) plays the whole moment, confetti included; nothing here.
-	-- DuelKnockback / DuelBounce: handled by RagdollController (later ticket); nothing here.
+	-- DuelKnockback / DuelBounce: handled by RagdollController (T-066); nothing here.
 }
 
 local function onPlayEffect(effect: unknown, payload: unknown)
