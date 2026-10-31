@@ -30,6 +30,12 @@ export type ZoneApi = {
 	isNearBoss: (player: Player, bossId: string) -> boolean,
 	isNearEggStand: ((player: Player, eggId: Types.EggId) -> boolean)?, -- arrives in sprint 2 (T-038)
 	getPod: ((player: Player) -> number)?, -- arrives in sprint 2 (T-038); 0 = in no pod
+	-- Mog rings (T-059, sprint 3). releaseRing must be called exactly once per reservation.
+	reserveRing: ((worldId: Types.WorldId) -> number?)?,
+	releaseRing: ((worldId: Types.WorldId, ringIndex: number) -> ())?,
+	teleportToRing: ((player: Player, worldId: Types.WorldId, ringIndex: number, side: number) -> ())?,
+	getRingKnockback: ((worldId: Types.WorldId, ringIndex: number) -> Vector3)?,
+	isInRing: ((player: Player, worldId: Types.WorldId, ringIndex: number) -> boolean)?,
 }
 
 export type ComplianceApi = {
@@ -43,10 +49,16 @@ export type DuelApi = {
 export type CharacterApi = {
 	setLook: ((player: Player, lookId: string) -> ())?, -- arrives in sprint 2 (T-038)
 	setSpeedMultiplier: ((player: Player, mult: number) -> ())?,
+	setMovementLocked: ((player: Player, reason: string, locked: boolean) -> ())?,
 }
+
+-- Grant fn contract (architecture 1b, 3c, 4e): mutates only `data`, synchronously, inside MonetizationService's
+-- one DataService.update that also records the receipt id; returns false = cannot grant now (NotYetProcessed).
+export type GrantFn = (player: Player, key: Types.ProductKey, data: ProfileData) -> boolean
 
 export type MonetizationApi = {
 	EntitlementsChanged: RBXScriptSignal?,
+	registerGrant: ((kind: Types.GrantKind, fn: GrantFn) -> ())?, -- arrives in sprint 3 (T-056)
 	getPaidTier: ((player: Player) -> number)?,
 	hasVip: ((player: Player) -> boolean)?,
 	owns: ((player: Player, key: Types.ProductKey) -> boolean)?,
@@ -55,6 +67,7 @@ export type MonetizationApi = {
 export type TelemetryApi = {
 	funnel: ((player: Player, step: Types.FunnelStep) -> ())?,
 	economy: ((player: Player, flow: "Source" | "Sink", amount: number, reason: Types.CoinReason) -> ())?,
+	custom: ((player: Player, name: Types.CustomEvent, value: number?) -> ())?,
 }
 
 export type PetApi = {
@@ -141,6 +154,34 @@ function Deps.economy(player: Player, flow: "Source" | "Sink", amount: number, r
 	if fn then
 		task.spawn(fn, player, flow, amount, reason)
 	end
+end
+
+function Deps.custom(player: Player, name: Types.CustomEvent, value: number?)
+	local telemetry = Deps.telemetry()
+	local fn = telemetry and telemetry.custom
+	if fn then
+		task.spawn(fn, player, name, value)
+	end
+end
+
+-- Registers a receipt grant with MonetizationService (T-056). Returns false (and warns once per kind) when the
+-- registry is not there yet, so a missing T-056 never errors a Start(). Call from Start() only.
+function Deps.registerGrant(kind: Types.GrantKind, fn: GrantFn): boolean
+	local monetization = Deps.monetization()
+	local register = monetization and monetization.registerGrant
+	if register == nil then
+		warn(`[Gameplay] MonetizationService.registerGrant missing; {kind} receipts are not granted yet`)
+		return false
+	end
+	register(kind, fn)
+	return true
+end
+
+-- True when Robux eggs may roll for this player. Fails closed: no ComplianceService or no answer yet = false.
+function Deps.paidRandomAllowed(player: Player): boolean
+	local compliance = Deps.compliance()
+	local fn = compliance and compliance.paidRandomAllowed
+	return fn ~= nil and fn(player) == true
 end
 
 return Deps

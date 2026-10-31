@@ -40,4 +40,16 @@ function PetRoll.pick(pets: { EggPet }, rng: Random): string
 	return PetRoll.pickWithRoll(pets, rng:NextInteger(1, math.max(1, PetRoll.total(pets))))
 end
 
+-- One Robux-egg hatch with pity (architecture 4b, GDD 5). `pity` = hatches since the last Legendary+.
+-- On the pity hatch (pity >= pityAt - 1) the roll uses EconomyConfig.pityOdds (Legendary 90 / Mythic 10).
+-- Returns the pet id, the new counter (0 after any Legendary+, else +1) and whether pity forced this hatch.
+-- A 3-pack calls this 3 times in order, feeding the counter through, so pity can trigger inside the pack.
+function PetRoll.pickWithPity(egg: EconomyConfig.Egg, pity: number, rng: Random): (string, number, boolean)
+	local current = if pity == pity and pity >= 0 and pity < math.huge then math.floor(pity) else 0
+	local forced = egg.pityAt ~= nil and current >= egg.pityAt - 1
+	local petId = PetRoll.pick(EconomyConfig.nextHatchOdds(egg, current), rng)
+	local hit = EconomyConfig.isPityHit(EconomyConfig.PETS[petId].rarity)
+	return petId, if hit then 0 else current + 1, forced
+end
+
 return PetRoll

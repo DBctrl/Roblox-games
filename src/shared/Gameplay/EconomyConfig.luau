@@ -125,6 +125,64 @@ EconomyConfig.DUEL_REWARD_BOSS_SEC = 120 -- winner gets 2 min of their own best-
 EconomyConfig.DUEL_REWARDS_PER_HOUR = 5
 EconomyConfig.DUEL_REWARDS_PER_OPPONENT = 2 -- per 15 min
 EconomyConfig.DUEL_OPPONENT_WINDOW_SEC = 15 * 60
+EconomyConfig.DUEL_REWARD_WINDOW_SEC = 60 * 60 -- DUEL_REWARDS_PER_HOUR counts wins in this window
+EconomyConfig.DUEL_TAP_TOTAL_MAX = EconomyConfig.DUEL_TAP_CAP_PER_SEC * EconomyConfig.DUEL_ACTIVE_SEC -- 80
+EconomyConfig.DUEL_TAP_BURST_SEC = 1 -- unused duel tap allowance carried at most this long (lag, batching)
+EconomyConfig.DUEL_CHALLENGE_COOLDOWN_SEC = 15 -- per target (GDD 6 anti-grief)
+EconomyConfig.DUEL_DECLINE_MUTE_COUNT = 3 -- declines in a row from one target ...
+EconomyConfig.DUEL_MUTE_SEC = 10 * 60 -- ... mute the challenger for that target this long
+EconomyConfig.DUEL_BLOCK_MAX = 50 -- session block list size (architecture 2 #12)
+
+-- Daily reward calendar (GDD 10, free only). Day = index 1..7 of the current streak; missing a UTC day restarts
+-- at Day 1. `coinSec` = seconds of the player's own best-boss coins/s (BossService.bestCoinsPerSec). No paid item
+-- changes these rows; VIP adds only DAILY_VIP_HYPE_SEC of Hype Snack per claim (GDD 8, 10).
+export type DailyReward = {
+	coinSec: number?, -- coins = floor(coinSec x best-boss coins/s)
+	hypeSec: number?, -- free Hype Snack seconds (2 h cap applies)
+	coinSnackSec: number?, -- free-only Coin Snack seconds (2 h cap applies)
+	freeHatch: boolean?, -- one free coin-egg hatch of the best unlocked world (Basic in v1)
+	cosmetic: string?, -- kept forever (entitlements.cosmetics)
+}
+local daily: { DailyReward } = {
+	{ coinSec = 2 * 60 }, -- D1
+	{ hypeSec = 10 * 60 }, -- D2
+	{ coinSec = 5 * 60 }, -- D3
+	{ freeHatch = true }, -- D4
+	{ coinSnackSec = 15 * 60 }, -- D5
+	{ coinSec = 10 * 60 }, -- D6
+	{ cosmetic = "WeekStreakAura", coinSec = 15 * 60 }, -- D7
+}
+for _, row in daily do
+	table.freeze(row)
+end
+EconomyConfig.DAILY_REWARDS = table.freeze(daily)
+EconomyConfig.DAILY_VIP_HYPE_SEC = 10 * 60
+EconomyConfig.DAY_SEC = 24 * 60 * 60 -- UTC day length for the calendar
+
+-- Tutorial quest chain (GDD 9). Step i is profile.quest.step == i; after the last step quest.done is true and
+-- duels unlock. Exactly one goal field per row. The UI shows `text`; QuestService checks the goal on the server.
+export type QuestStep = {
+	text: string,
+	bossWins: number?, -- lifetime boss wins (stats.bossWins) at least this
+	toolIndex: number?, -- owns this tool or a better one
+	beatBoss: string?, -- win against this boss id while on this step
+	podIndex: number?, -- owns this pod
+	rank: number?, -- rank at least this
+	hatch: boolean?, -- hatch any egg while on this step
+}
+local quests: { QuestStep } = {
+	{ text = "Win 5 boss fights", bossWins = 5 },
+	{ text = "Buy Hair Gel", toolIndex = 2 },
+	{ text = "Beat Bedhead Benny", beatBoss = "BedheadBenny" },
+	{ text = "Unlock the Ring Light Pod", podIndex = 1 },
+	{ text = "Buy the Bubble Face Mask", toolIndex = 3 },
+	{ text = "Rank up to Comb Rookie", rank = 2 },
+	{ text = "Hatch your first pet", hatch = true },
+}
+for _, row in quests do
+	table.freeze(row)
+end
+EconomyConfig.QUEST_STEPS = table.freeze(quests)
 
 -- Tools (GDD 4.2; reset on rebirth) ----------------------------------------------------------------------
 local tools: { Tool } = {
@@ -206,7 +264,7 @@ local pets: { [string]: Pet } = {
 	AuraLion = { name = "Aura Lion", rarity = "Epic", bonus = 1.80 },
 	HaloDragon = { name = "Halo Dragon", rarity = "Legendary", bonus = 3.50 },
 	CosmicUnicorn = { name = "Cosmic Unicorn", rarity = "Mythic", bonus = 8.00 },
-	-- Galaxy Egg (W2, Robux; rolled in T-073)
+	-- Galaxy Egg (W1 since D-057, Robux; rolled in T-073)
 	NebulaFox = { name = "Nebula Fox", rarity = "Rare", bonus = 3.00 },
 	CometWolf = { name = "Comet Wolf", rarity = "Epic", bonus = 5.00 },
 	SupernovaDragon = { name = "Supernova Dragon", rarity = "Legendary", bonus = 9.00 },
@@ -262,7 +320,7 @@ local eggs: { [string]: Egg } = {
 	},
 	GalaxyEgg = {
 		name = "Galaxy Egg",
-		world = 2,
+		world = 1, -- GDD rev 3 5.2 (D-057): moved from World 2; odds, pity, prices and fallback unchanged
 		currency = "Robux",
 		price = 0,
 		pets = {
@@ -388,6 +446,36 @@ function EconomyConfig.bossCoinsPerSec(boss: Boss, rebirths: number): number
 	return boss.coins * EconomyConfig.coinRebirthMult(rebirths) / EconomyConfig.BOSS_CYCLE_SEC
 end
 
+-- Pity odds (GDD 5): the forced hatch is Legendary PITY_LEGENDARY_WEIGHT / Mythic PITY_MYTHIC_WEIGHT out of
+-- ODDS_TOTAL, from the egg's own Legendary and Mythic pets (validate() asserts one of each on Robux eggs).
+-- Same rows the UI shows at 9/10 and PetService rolls, so the shown true odds are the odds used. Pure, no roll.
+function EconomyConfig.pityOdds(egg: Egg): { EggPet }
+	local rows: { EggPet } = {}
+	for _, entry in egg.pets do
+		local rarity = EconomyConfig.PETS[entry.petId].rarity
+		if rarity == "Legendary" then
+			table.insert(rows, { petId = entry.petId, weight = EconomyConfig.PITY_LEGENDARY_WEIGHT })
+		elseif rarity == "Mythic" then
+			table.insert(rows, { petId = entry.petId, weight = EconomyConfig.PITY_MYTHIC_WEIGHT })
+		end
+	end
+	return rows
+end
+
+-- True odds of the NEXT hatch of `egg` with saved counter `pity`: the pity rows when this hatch is the pity hatch
+-- (pity >= pityAt - 1), else the base table. Coin eggs always return the base table.
+function EconomyConfig.nextHatchOdds(egg: Egg, pity: number): { EggPet }
+	if egg.pityAt and isFinite(pity) and pity >= egg.pityAt - 1 then
+		return EconomyConfig.pityOdds(egg)
+	end
+	return egg.pets
+end
+
+-- True for the rarities that reset the pity counter (Legendary or better).
+function EconomyConfig.isPityHit(rarity: string): boolean
+	return rarity == "Legendary" or rarity == "Mythic"
+end
+
 -- Asserts the tables are well formed. Runs at server start (BossService) and in qa tests (T-024).
 function EconomyConfig.validate()
 	local function ascending(list: { any }, field: string, label: string)
@@ -463,6 +551,16 @@ function EconomyConfig.validate()
 				`EconomyConfig: Robux egg {eggId} needs a restrictedGrant in its table`
 			)
 			assert(egg.pityAt and egg.pityAt >= 2, `EconomyConfig: Robux egg {eggId} needs pityAt`)
+			local legendary, mythic = 0, 0
+			for _, entry in egg.pets do
+				local rarity = EconomyConfig.PETS[entry.petId].rarity
+				legendary += if rarity == "Legendary" then 1 else 0
+				mythic += if rarity == "Mythic" then 1 else 0
+			end
+			assert(
+				legendary == 1 and mythic == 1,
+				`EconomyConfig: Robux egg {eggId} needs one Legendary and one Mythic for pity`
+			)
 		end
 	end
 	assert(listed == 0, "EconomyConfig: EGG_IDS must list every egg exactly once")
