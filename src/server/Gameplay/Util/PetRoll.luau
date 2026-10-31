@@ -1,6 +1,6 @@
 --!strict
--- Pure egg roll (architecture 4b). Owned by gameplay-programmer. Server only: PetService owns the one `Random`
--- and passes it in, so the client never sees or sends a seed. No Roblox services, so qa can feed fixed rolls or
+-- Pure pet roll (architecture 4b, QA-F7): the roller PetService really uses. Owned by gameplay-programmer.
+-- Server only: PetService owns the one `Random` and passes it in, so the client never sees or sends a seed. No Roblox services, so qa can feed fixed rolls or
 -- a seeded `Random` and check 100,000 rolls against the listed odds (T-046).
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,10 +9,10 @@ local EconomyConfig = require(ReplicatedStorage.Shared.Gameplay.EconomyConfig)
 
 type EggPet = EconomyConfig.EggPet
 
-local EggRoll = {}
+local PetRoll = {}
 
 -- Sum of the weights in `entries` (10,000 for every validated egg).
-function EggRoll.total(entries: { EggPet }): number
+function PetRoll.total(entries: { EggPet }): number
 	local sum = 0
 	for _, entry in entries do
 		sum += entry.weight
@@ -22,8 +22,8 @@ end
 
 -- Maps a roll `r` in 1..total to a pet id by walking the weights in table order. Out-of-range rolls clamp,
 -- so a bad roll can never return nil for a valid table.
-function EggRoll.pickWithRoll(entries: { EggPet }, r: number): string
-	local total = EggRoll.total(entries)
+function PetRoll.pickWithRoll(entries: { EggPet }, r: number): string
+	local total = PetRoll.total(entries)
 	local roll = math.clamp(math.floor(r), 1, math.max(1, total))
 	local acc = 0
 	for _, entry in entries do
@@ -36,8 +36,8 @@ function EggRoll.pickWithRoll(entries: { EggPet }, r: number): string
 end
 
 -- One weighted roll with the server's Random.
-function EggRoll.pick(entries: { EggPet }, rng: Random): string
-	return EggRoll.pickWithRoll(entries, rng:NextInteger(1, math.max(1, EggRoll.total(entries))))
+function PetRoll.pick(pets: { EggPet }, rng: Random): string
+	return PetRoll.pickWithRoll(pets, rng:NextInteger(1, math.max(1, PetRoll.total(pets))))
 end
 
-return EggRoll
+return PetRoll

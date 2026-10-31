@@ -15,10 +15,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ActivityService = require(script.Parent.ActivityService)
 local Deps = require(script.Parent.Util.Deps)
 local EconomyConfig = require(ReplicatedStorage.Shared.Gameplay.EconomyConfig)
-local EggRoll = require(script.Parent.Util.EggRoll)
 local Guard = require(script.Parent.Util.Guard)
 local MultiplierService = require(script.Parent.MultiplierService)
 local NumberFormat = require(ReplicatedStorage.Shared.Contracts.NumberFormat)
+local PetRoll = require(script.Parent.Util.PetRoll)
 local RateLimit = require(ReplicatedStorage.Shared.Contracts.RateLimit)
 local Remotes = require(ReplicatedStorage.Shared.Contracts.Remotes)
 local Types = require(ReplicatedStorage.Shared.Contracts.Types)
@@ -98,7 +98,7 @@ end
 local function rollPets(egg: Egg, count: number): { string }
 	local ids = table.create(count)
 	for i = 1, count do
-		ids[i] = EggRoll.pick(egg.pets, rng)
+		ids[i] = PetRoll.pick(egg.pets, rng)
 	end
 	return ids
 end
@@ -334,7 +334,7 @@ function PetService.grantEgg(player: Player, eggId: Types.EggId, count: number):
 end
 
 -- Equips or unequips one owned pet. Equip needs a free slot. No-op (true) if nothing changes.
-function PetService.tryEquip(player: Player, petUid: string, equip: boolean): (boolean, string?)
+function PetService.setEquipped(player: Player, petUid: string, equip: boolean): (boolean, string?)
 	local dataApi = Deps.data()
 	local data = dataApi.getData(player)
 	if data == nil then
@@ -369,7 +369,7 @@ function PetService.tryEquip(player: Player, petUid: string, equip: boolean): (b
 end
 
 -- Deletes 1..60 owned pets (unequipping them first). `petUids` must be a plain array of unique uid strings.
-function PetService.tryDelete(player: Player, petUids: { string }): (boolean, string?)
+function PetService.deletePets(player: Player, petUids: { string }): (boolean, string?)
 	local dataApi = Deps.data()
 	local data = dataApi.getData(player)
 	if data == nil then
@@ -487,7 +487,7 @@ function PetService.Start()
 		if typeof(equip) ~= "boolean" then
 			return
 		end
-		local ok, reason = PetService.tryEquip(player, petUid, equip)
+		local ok, reason = PetService.setEquipped(player, petUid, equip)
 		if not ok and reason == "NoSlot" then
 			notify(player, "Error", "No free pet slot. Unequip a pet first")
 		end
@@ -497,7 +497,7 @@ function PetService.Start()
 		if not dataApi.isLoaded(player) or typeof(petUids) ~= "table" then
 			return
 		end
-		PetService.tryDelete(player, petUids)
+		PetService.deletePets(player, petUids)
 	end)
 
 	dataApi.ProfileLoaded:Connect(onLoaded)
