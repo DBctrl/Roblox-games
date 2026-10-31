@@ -11,7 +11,8 @@
 --   EconomyConfig.TOOLS  = { { name, mpPerTap, cost, worldId } } (index = tool index 1..12)
 --   EconomyConfig.RANKS  = { { name, lifetimeMp } } (index = rank 1..12)
 --   EconomyConfig.TAP_CAP_PER_SEC, EconomyConfig.INTERACT_RANGE
---   MapLayout.getBossStage(bossId: string): BasePart?            (nil while streamed out)
+--   MapLayout.getBossStage(bossId: string): Instance?  (Model or BasePart, nil while streamed out)
+--   MapLayout.positionOf(inst: Instance?): Vector3?
 --   MapLayout.getShopKindOf(inst): "Tools" | "Robux" | nil (prompts are matched by walking their ancestors)
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -172,15 +173,45 @@ function GameData.interactRange(): number
 	return num(economy and economy.INTERACT_RANGE, DEFAULT_RANGE)
 end
 
-function GameData.bossStage(bossId: string): BasePart?
+-- The boss's `BossStage` map item: a Model or a BasePart (CR-4), nil while streamed out. Use `positionOf` for
+-- its position, never `.Position`.
+function GameData.bossStage(bossId: string): Instance?
 	ensure()
 	local fn = mapLayout and mapLayout.getBossStage
 	if type(fn) ~= "function" then
 		return nil
 	end
-	local ok, part = pcall(fn, bossId)
-	if ok and typeof(part) == "Instance" and part:IsA("BasePart") then
-		return part
+	local ok, stage = pcall(fn, bossId)
+	if ok and typeof(stage) == "Instance" then
+		return stage
+	end
+	return nil
+end
+
+-- World position of a map item (BasePart position, Model pivot) through MapLayout.positionOf; nil if unknown.
+function GameData.positionOf(inst: Instance?): Vector3?
+	ensure()
+	local fn = mapLayout and mapLayout.positionOf
+	if inst == nil or type(fn) ~= "function" then
+		return nil
+	end
+	local ok, pos = pcall(fn, inst)
+	if ok and typeof(pos) == "Vector3" then
+		return pos
+	end
+	return nil
+end
+
+-- A BasePart to hang an Attachment on: the item itself, a Model's PrimaryPart, or its first streamed-in part.
+function GameData.anchorPartOf(inst: Instance?): BasePart?
+	if inst == nil then
+		return nil
+	end
+	if inst:IsA("BasePart") then
+		return inst
+	end
+	if inst:IsA("Model") then
+		return inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
 	end
 	return nil
 end

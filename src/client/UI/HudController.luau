@@ -33,6 +33,7 @@ local Theme = Ui.Theme
 
 local ARROW_HIDE_DISTANCE = 12 -- studs: close enough to the stage, the arrow goes away
 local ARROW_CHECK_SEC = 0.5
+local ARROW_MODEL_LIFT = 3 -- studs above a Model stage's pivot
 local MOG_CHECK_SEC = 0.25
 local MOG_DEBOUNCE_SEC = 1
 
@@ -333,9 +334,9 @@ local function bossInRange(): GameData.Boss?
 	local best: GameData.Boss? = nil
 	local bestDistance = math.huge
 	for _, boss in GameData.bossesInWorld(Ui.numAttr(Attr.WorldId, 1)) do
-		local stage = GameData.bossStage(boss.id)
-		if stage then
-			local distance = (stage.Position - root.Position).Magnitude
+		local stagePos = GameData.positionOf(GameData.bossStage(boss.id))
+		if stagePos then
+			local distance = (stagePos - root.Position).Magnitude
 			if distance <= range and distance < bestDistance then
 				best, bestDistance = boss, distance
 			end
@@ -436,7 +437,7 @@ local function ensureBeam(): Beam?
 end
 
 local function updateArrow()
-	local stage: BasePart? = nil
+	local stage: Instance? = nil
 	if not Ui.boolAttr(Attr.FirstWin) then
 		local target = meterTarget()
 		stage = if target then GameData.bossStage(target.id) else nil
@@ -445,23 +446,27 @@ local function updateArrow()
 	if currentBeam == nil then
 		return
 	end
-	if stage == nil then
+	-- A stage may be a Model or a BasePart (CR-4): aim at its position, hang the attachment on a part of it.
+	local stagePos = GameData.positionOf(stage)
+	local anchor = GameData.anchorPartOf(stage)
+	if stagePos == nil or anchor == nil then
 		currentBeam.Enabled = false
 		return
 	end
-	if stageAttachment == nil or stageAttachment.Parent ~= stage then
+	local aim = if stage and stage:IsA("BasePart")
+		then stagePos + Vector3.new(0, stage.Size.Y / 2, 0)
+		else stagePos + Vector3.new(0, ARROW_MODEL_LIFT, 0)
+	if stageAttachment == nil or stageAttachment.Parent ~= anchor then
 		if stageAttachment then
 			stageAttachment:Destroy()
 		end
-		stageAttachment = Ui.new("Attachment", {
-			Name = "HudArrowTo",
-			Position = Vector3.new(0, stage.Size.Y / 2, 0),
-			Parent = stage,
-		})
+		stageAttachment = Ui.new("Attachment", { Name = "HudArrowTo", Parent = anchor })
 	end
-	currentBeam.Attachment1 = stageAttachment
+	local target = stageAttachment :: Attachment
+	target.Position = anchor.CFrame:PointToObjectSpace(aim)
+	currentBeam.Attachment1 = target
 	local from = rootAttachment
-	local distance = if from then (from.WorldPosition - stage.Position).Magnitude else 0
+	local distance = if from then (from.WorldPosition - stagePos).Magnitude else 0
 	currentBeam.Enabled = distance > ARROW_HIDE_DISTANCE
 end
 
