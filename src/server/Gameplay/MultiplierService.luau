@@ -8,7 +8,12 @@
 -- used is written back on every refresh and when the session ends. Each boost caps at 2 h (EconomyConfig).
 -- Ownership (paid tier, VIP) is read from MonetizationService when it exists (sprint 3), otherwise from the
 -- profile entitlements through DataService. This service never decides a purchase.
--- Receipt grants (PaidTier, Boost) are registered in T-053 (sprint 3, owner price gate).
+-- Receipt grants (T-053): registers the PaidTier (ladder) and Boost (Hype Snack) grant fns with
+-- MonetizationService. A ladder receipt raises the tier only when it is for exactly the next tier; any other
+-- ladder receipt (owned, lower or skip-ahead) adds Hype Snack time from ProductCatalog.ladderGrant, past the
+-- 2 h cap, and is logged (D-019 #3). Boost receipts add their time even past the cap (D-019 #4); the purchase
+-- gate (MonetizationService, with `getBoostSec`) is what stops a buy that would pass the cap. No grant here
+-- touches coins, tools, pods, rebirths or eggs (GDD 8g).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -17,6 +22,7 @@ local Deps = require(script.Parent.Util.Deps)
 local EconomyConfig = require(ReplicatedStorage.Shared.Gameplay.EconomyConfig)
 local Guard = require(script.Parent.Util.Guard)
 local MultiplierMath = require(script.Parent.Util.MultiplierMath)
+local ProductCatalog = require(ReplicatedStorage.Shared.Contracts.ProductCatalog)
 local Types = require(ReplicatedStorage.Shared.Contracts.Types)
 
 local Attr = Types.PlayerAttr
@@ -245,6 +251,62 @@ function MultiplierService.addBoost(player: Player, kind: BoostKind, seconds: nu
 	refresh(player)
 end
 
+-- Live seconds left on a boost (what the HUD shows). For MonetizationService's 2 h cap gate on Hype Snack.
+function MultiplierService.getBoostSec(player: Player, kind: BoostKind): number
+	local state = states[player]
+	local data = Deps.data().getData(player)
+	if state == nil or data == nil or ENDS_ATTR[kind] == nil then
+		return 0
+	end
+	local sec = getSec(data.boosts, kind)
+	if state.active[kind] then
+		sec = math.max(0, sec - math.max(0, now() - state.syncedAt))
+	end
+	return sec
+end
+
+-- Receipt grants (T-053). Run inside MonetizationService's one DataService.update: they mutate only `data`,
+-- never yield, never call DataService, and return false without touching `data` when they cannot grant.
+
+local function addHypeUncapped(data: Types.ProfileData, seconds: number)
+	setSec(data.boosts, "Hype", getSec(data.boosts, "Hype") + seconds)
+end
+
+local function grantPaidTier(player: Player, key: Types.ProductKey, data: Types.ProfileData): boolean
+	local entry = ProductCatalog.get(key)
+	if entry == nil or not entry.onSale or entry.grantKind ~= "PaidTier" or entry.tier == nil then
+		return false
+	end
+	local owned = math.floor(Guard.clampFinite(data.entitlements.paidTier, 0, ProductCatalog.LADDER_TIERS, 0))
+	local grant = ProductCatalog.ladderGrant(entry.key, owned)
+	if grant.tier then
+		data.entitlements.paidTier = grant.tier
+	elseif grant.hypeSec > 0 then
+		addHypeUncapped(data, grant.hypeSec) -- D-019 #3: never the next tier, cap bypassed
+		print(
+			`[MultiplierService] ladder fallback: user {player.UserId} key {key} owned tier {owned} -> +{grant.hypeSec} s Hype`
+		)
+	else
+		return false
+	end
+	task.defer(refresh, player)
+	return true
+end
+
+local function grantBoost(player: Player, key: Types.ProductKey, data: Types.ProfileData): boolean
+	local entry = ProductCatalog.get(key)
+	local seconds = entry and entry.hypeSec
+	if entry == nil or not entry.onSale or entry.grantKind ~= "Boost" or seconds == nil or seconds <= 0 then
+		return false -- Speed Sneakers is not on sale (D-038); no other boost product exists
+	end
+	addHypeUncapped(data, seconds) -- time past the cap is added, never dropped (D-019 #4)
+	task.defer(refresh, player)
+	return true
+end
+
+-- Exposed for qa's GDD 8g firewall test (walks every grant fn with a fake profile).
+MultiplierService.grants = table.freeze({ PaidTier = grantPaidTier, Boost = grantBoost })
+
 function MultiplierService.Init() end
 
 function MultiplierService.Start()
@@ -256,6 +318,8 @@ function MultiplierService.Start()
 	if monetization and monetization.EntitlementsChanged then
 		monetization.EntitlementsChanged:Connect(refresh)
 	end
+	Deps.registerGrant("PaidTier", grantPaidTier)
+	Deps.registerGrant("Boost", grantBoost)
 	for _, player in Players:GetPlayers() do
 		if data.isLoaded(player) then
 			onLoaded(player)

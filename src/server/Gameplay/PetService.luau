@@ -6,8 +6,10 @@
 -- Cost, roll and inventory insert happen in ONE DataService.update, so a hatch is all-or-nothing.
 -- Every equip, unequip or delete ends with MultiplierService.refresh (CR-c, D-032), so M is never stale.
 -- Sole writer of EquippedPets, PetInventory, PetCount, PetSlots, PityStarEgg and PityGalaxyEgg.
--- Lean v1 (D-034): coin eggs (Basic, Shiny) only. Robux eggs, pity rolls and receipt grants (FixedPet,
--- StarterPack, RobuxEgg) are built in T-073 / sprint 3; until then `grantEgg` refuses Robux eggs.
+-- Receipt grants (T-053, T-073), registered with MonetizationService in Start(): FixedPet (Ring Light Retriever),
+-- StarterPack (Sparkle Pup + 30 min Hype + Rookie Shades, no coins, pod or egg) and RobuxEgg. Paid pets may take
+-- the inventory past INVENTORY_CAP up to INVENTORY_HARD_CAP so no paid pet is lost; at the hard cap the grant
+-- returns false (receipt stays unprocessed and retries after the player makes room).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -19,6 +21,7 @@ local Guard = require(script.Parent.Util.Guard)
 local MultiplierService = require(script.Parent.MultiplierService)
 local NumberFormat = require(ReplicatedStorage.Shared.Contracts.NumberFormat)
 local PetRoll = require(script.Parent.Util.PetRoll)
+local ProductCatalog = require(ReplicatedStorage.Shared.Contracts.ProductCatalog)
 local RateLimit = require(ReplicatedStorage.Shared.Contracts.RateLimit)
 local Remotes = require(ReplicatedStorage.Shared.Contracts.Remotes)
 local Types = require(ReplicatedStorage.Shared.Contracts.Types)
@@ -447,6 +450,93 @@ function PetService.deletePets(player: Player, petUids: { string }): (boolean, s
 	return true
 end
 
+-- Receipt grants (T-053, T-073) ---------------------------------------------------------------------------
+-- Each runs inside MonetizationService's one DataService.update (architecture 3c step 4): it mutates only `data`,
+-- never yields or calls DataService, and returns false WITHOUT touching `data` when it cannot grant. Receipt
+-- dedupe is MonetizationService's (receipt id stored in the same update), so a grant runs once per receipt.
+-- Attribute writes, Notify and HatchResult are deferred until after that update. No grant touches coins.
+
+-- Paid pets that still fit under the hard cap (paid receipts may pass INVENTORY_CAP by up to 6, 4b).
+local function paidRoom(data: ProfileData, count: number): boolean
+	return inventoryCount(data) + count <= EconomyConfig.INVENTORY_HARD_CAP
+end
+
+local function afterGrant(player: Player, text: string?)
+	task.defer(function()
+		if player.Parent ~= Players then
+			return
+		end
+		refreshAttributes(player)
+		MultiplierService.refresh(player)
+		if text then
+			notify(player, "Success", text)
+		end
+	end)
+end
+
+local function refuseFull(player: Player)
+	task.defer(
+		notify,
+		player,
+		"Error",
+		"Pet inventory is full. Delete some pets and rejoin to receive your purchase"
+	)
+end
+
+local function grantFixedPet(player: Player, key: Types.ProductKey, data: ProfileData): boolean
+	local entry = ProductCatalog.get(key)
+	local petId = entry and entry.petId
+	local pet = petId and EconomyConfig.PETS[petId]
+	if entry == nil or not entry.onSale or entry.grantKind ~= "FixedPet" or petId == nil or pet == nil then
+		return false -- Neon Pup is not on sale (D-038)
+	end
+	if not paidRoom(data, 1) then
+		refuseFull(player)
+		return false
+	end
+	data.pets.inventory[takeUid(data)] = { id = petId }
+	afterGrant(player, `You got {pet.name}!`)
+	return true
+end
+
+-- Starter Pack: Sparkle Pup + 30 min Hype Snack + Rookie Shades + the once flag. No coins, no pod, no egg.
+-- The once rule is a prompt gate (MonetizationService); a second receipt that still arrives gets the same contents
+-- again, so Robux is never taken for nothing (D-056).
+local function grantStarterPack(player: Player, key: Types.ProductKey, data: ProfileData): boolean
+	local entry = ProductCatalog.get(key)
+	local petId = entry and entry.petId
+	local hypeSec = entry and entry.hypeSec
+	if
+		entry == nil
+		or not entry.onSale
+		or entry.grantKind ~= "StarterPack"
+		or petId == nil
+		or EconomyConfig.PETS[petId] == nil
+		or hypeSec == nil
+	then
+		return false
+	end
+	if not paidRoom(data, 1) then
+		refuseFull(player)
+		return false
+	end
+	if data.entitlements.starterPack then
+		print(`[PetService] repeat Starter Pack receipt for user {player.UserId}: contents granted again`)
+	end
+	data.pets.inventory[takeUid(data)] = { id = petId }
+	data.boosts.hypeSec = Guard.clampFinite(data.boosts.hypeSec, 0, math.huge, 0) + hypeSec -- paid time never dropped
+	data.entitlements.cosmetics.RookieShades = true
+	data.entitlements.starterPack = true
+	afterGrant(player, "Starter Pack unlocked!")
+	return true
+end
+
+-- Exposed for qa's GDD 8g firewall test (walks every grant fn with a fake profile).
+PetService.grants = {
+	FixedPet = grantFixedPet,
+	StarterPack = grantStarterPack,
+}
+
 -- Lifecycle -------------------------------------------------------------------------------------------------
 
 local HATCH_TEXT: { [string]: string } = {
@@ -531,6 +621,9 @@ function PetService.Start()
 		end
 		PetService.deletePets(player, petUids)
 	end)
+
+	Deps.registerGrant("FixedPet", grantFixedPet)
+	Deps.registerGrant("StarterPack", grantStarterPack)
 
 	dataApi.ProfileLoaded:Connect(onLoaded)
 	Players.PlayerRemoving:Connect(onRemoving)
