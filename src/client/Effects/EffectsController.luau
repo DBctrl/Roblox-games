@@ -4,7 +4,7 @@
 -- It never sends a remote, never reads or writes game state and never decides anything; TapController (UI)
 -- still owns sending `TapBatch`. All effect instances are pooled (Util/EffectPool) and built in Init.
 -- Network ownership: none involved. Pool parts are client-created, anchored, non-colliding and never replicate.
--- Boss pose-off/ragdoll is T-022; rank-up/rebirth cinematics belong to CinematicController.
+-- Boss pose-off/ragdoll is T-022; the rank-up moment and the hatch reveal belong to CinematicController.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -82,13 +82,6 @@ local handlers: { [Types.EffectId]: Handler } = {
 		local spot = spotAbove(p.userId, EffectsConfig.CoinBurst.heightOffset)
 		burst(coinPool, spot, EffectsConfig.donationParticles(tier))
 	end,
-	RankUp = function(p)
-		burst(
-			celebratePool,
-			spotAbove(p.userId, EffectsConfig.Celebrate.heightOffset),
-			EffectsConfig.Celebrate.RankUp
-		)
-	end,
 	Rebirth = function(p)
 		local spot = spotAbove(p.userId, EffectsConfig.Celebrate.heightOffset)
 		burst(celebratePool, spot, EffectsConfig.Celebrate.Rebirth)
@@ -97,6 +90,7 @@ local handlers: { [Types.EffectId]: Handler } = {
 		local spot = spotAbove(p.userId, EffectsConfig.Celebrate.heightOffset)
 		burst(celebratePool, spot, EffectsConfig.Celebrate.Purchase)
 	end,
+	-- RankUp: CinematicController (T-043) plays the whole moment, confetti included; nothing here.
 	-- DuelKnockback / DuelBounce: handled by RagdollController (later ticket); nothing here.
 }
 
