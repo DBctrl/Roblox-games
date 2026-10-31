@@ -48,9 +48,8 @@ EffectsConfig.CoinBurst = table.freeze({
 	heightOffset = 3,
 })
 
--- Celebration sparkle bursts (PlayEffect RankUp, Rebirth, Purchase). Cinematics are CinematicController's (T-023+).
+-- Celebration sparkle bursts (PlayEffect Rebirth, Purchase). RankUp is CinematicController's (T-043).
 EffectsConfig.Celebrate = table.freeze({
-	RankUp = 40,
 	Rebirth = 50,
 	Purchase = 25,
 	heightOffset = 3,
@@ -95,6 +94,24 @@ EffectsConfig.Pools = table.freeze({
 			drag = 1,
 		}),
 	}),
+	-- Rank-up confetti (T-043): 3 bursts for the local moment + 2 nearby moments at once.
+	Confetti = table.freeze({
+		size = 6,
+		look = table.freeze({
+			texture = SPARKLE_TEXTURE,
+			color = Color3.fromRGB(255, 120, 200),
+			lightEmission = 0.6,
+			sizeStart = 0.7,
+			sizeEnd = 0.5,
+			lifetimeMin = 1.2,
+			lifetimeMax = 1.8,
+			speedMin = 10,
+			speedMax = 20,
+			spread = 70,
+			gravity = 18,
+			drag = 1.5,
+		}),
+	}),
 	Celebrate = table.freeze({
 		size = 4,
 		look = table.freeze({
@@ -114,6 +131,38 @@ EffectsConfig.Pools = table.freeze({
 	}),
 })
 
+-- Rank-up moment (T-043, GDD 7: 3 s, spotlight, confetti, camera orbit, the new look pops on).
+-- The local player gets the camera orbit; other players within `nearbyDistance` of the camera see the spotlight,
+-- confetti and look pop on that character with no camera change. One render-step function drives everything
+-- (no tweens). The orbit is skipped (spotlight + confetti only) while the local player is in a duel.
+EffectsConfig.RankUp = table.freeze({
+	duration = 3, -- seconds
+	nearbyDistance = 90, -- studs from the camera for other players' rank-ups
+	maxRigs = 3, -- spotlight + highlight rigs alive at once (local + 2 nearby); extra rank-ups get confetti only
+	orbitRadius = 11, -- studs from the HumanoidRootPart
+	orbitHeight = 3.5, -- studs above the root
+	orbitTurns = 0.75, -- turns around the character over the whole moment
+	orbitFov = 60,
+	blendIn = 0.35, -- seconds from the player's camera into the orbit
+	blendOut = 0.45, -- seconds from the orbit back to the player's camera
+	lookHeight = 1.2, -- studs above the root the camera looks at
+	beamHeight = 26, -- spotlight beam length, studs
+	beamWidth = 7,
+	beamTransparency = 0.82, -- beam at full strength (1 = invisible)
+	beamColor = Color3.fromRGB(255, 244, 200),
+	lightBrightness = 6,
+	lightRange = 30,
+	lightAngle = 40,
+	popAt = 0.6, -- seconds in: the look "pops" (highlight flash + confetti burst)
+	popFade = 0.7, -- seconds the highlight flash takes to fade out
+	popColor = Color3.fromRGB(255, 230, 120),
+	confettiBursts = { 0.6, 1.4, 2.2 }, -- seconds in
+	confettiPerBurst = 45,
+	confettiNearbyPerBurst = 25,
+	confettiHeight = 7, -- studs above the root
+	titleText = "RANK UP!",
+})
+
 -- Pure: particle count for a coin burst of `amount` coins/MP. Safe on NaN, inf and negatives.
 function EffectsConfig.coinParticles(amount: number?): number
 	local c = EffectsConfig.CoinBurst
@@ -131,6 +180,21 @@ function EffectsConfig.donationParticles(tier: number?): number
 		t = math.clamp(math.floor(tier), 1, 5)
 	end
 	return t * EffectsConfig.CoinBurst.donationPerTier
+end
+
+-- Pure: smoothstep 0..1.
+function EffectsConfig.smooth(t: number): number
+	local x = math.clamp(t, 0, 1)
+	return x * x * (3 - 2 * x)
+end
+
+-- Pure: camera position on the rank-up orbit at `elapsed` seconds around `center`, starting at `startAngle`
+-- (radians, so the orbit begins behind the camera's current side).
+function EffectsConfig.orbitPosition(center: Vector3, startAngle: number, elapsed: number): Vector3
+	local cfg = EffectsConfig.RankUp
+	local angle = startAngle + (elapsed / cfg.duration) * cfg.orbitTurns * 2 * math.pi
+	return center
+		+ Vector3.new(math.cos(angle) * cfg.orbitRadius, cfg.orbitHeight, math.sin(angle) * cfg.orbitRadius)
 end
 
 -- Asserts the budgets hold together (qa can call this in tests).
@@ -154,6 +218,15 @@ function EffectsConfig.validate()
 	assert(
 		EffectsConfig.donationParticles(5) <= EffectsConfig.MAX_PARTICLES_ALIVE,
 		"donation burst exceeds cap"
+	)
+	-- Rank-up: a local moment's confetti that is alive at once must fit in the cap with tap sparkles.
+	local r = EffectsConfig.RankUp
+	assert(r.blendIn + r.blendOut < r.duration, "rank-up blends longer than the moment")
+	local confetti = EffectsConfig.Pools.Confetti
+	assert(#r.confettiBursts <= confetti.size, "confetti pool too small for one rank-up")
+	assert(
+		r.confettiPerBurst * #r.confettiBursts + worstCase <= EffectsConfig.MAX_PARTICLES_ALIVE,
+		"rank-up confetti + tap sparkles exceed cap"
 	)
 end
 
