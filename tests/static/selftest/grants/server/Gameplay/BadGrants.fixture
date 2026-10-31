@@ -8,6 +8,14 @@ local function bumpVip(player, data)
 	end)
 end
 
+local function setSec(boosts, kind, sec)
+	if kind == "Hype" then
+		boosts.hypeSec = sec
+	elseif kind == "Coin" then
+		boosts.coinSec = sec
+	end
+end
+
 local function grantEntitlement(player, key, data)
 	bumpVip(player, data)
 	return true
@@ -21,7 +29,7 @@ end)
 
 Monetization.registerGrant("Boost", function(player, key, data)
 	task.wait(1)
-	data.boosts.hypeSec += 600
+	setSec(data.boosts, "Coin", 600)
 	return true
 end)
 
