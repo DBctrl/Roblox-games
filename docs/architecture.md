@@ -1,13 +1,13 @@
 # Architecture: "Aura Up!" (working title) v1
-_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1.3, 2026-10-31
+_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1.4, 2026-10-31
 (D-017, updated for GDD rev 1 / option A in D-023, sprint-1 contract requests in D-032, sprint-2 contract requests
-in D-051). Built from docs/gdd.md rev 1, approved by the owner (D-021).
+in D-051, ProductCatalog in D-054). Built from docs/gdd.md rev 1, approved by the owner (D-021).
 Source of truth for code contracts: `src/shared/Contracts/Remotes.luau` and `src/shared/Contracts/Types.luau`.
 Both must match this file. Applies lawyer rulings D-016 and D-019 (policy gate on Robux eggs only, next-tier-only
-ladder, restricted receipts). Prices were approved by the owner in D-038; they live only in config
-(`ProductCatalog`, T-069, sprint 3), so a price change does not change this contract. D-038 leaves Speed Sneakers,
-Neon Pup, Neon Icon Fit and the five tips out of v1: `T.ProductKey` still lists all 23 keys, and T-069 decides
-(through a Contract request) whether to trim them or only leave them out of the catalog._
+ladder, restricted receipts). Prices were approved by the owner in D-038; they live only in
+`Contracts/ProductCatalog.luau` (T-069, section 4f), so a price change does not change this contract. D-038 leaves
+Speed Sneakers, Neon Pup, Neon Icon Fit and the five tips out of v1: `T.ProductKey` keeps all 23 keys, and those 8
+have catalog entries with `onSale = false` (D-054)._
 
 ## Toolchain (cloud session, sprint 1, D-022)
 Binaries live outside the repo in `/home/user/.tools/bin` (git-ignored): StyLua 2.0.2, Selene 0.28.0, Rojo 7.4.4
@@ -232,6 +232,7 @@ function QuestService.isTutorialDone(player: Player): boolean
 | 24 | Physics/EffectsConfig | physics | `src/shared/Physics` | Ragdoll impulse/duration, pool sizes, particle budgets, camera timings |
 | 21a | Contracts/RateLimit | integration | `src/shared/Contracts` | Per-player, per-remote token bucket for every C->S handler (T-004) |
 | 21b | Contracts/NumberFormat | integration | `src/shared/Contracts` | Pure display formatting: K/M/B/T/Qa, commas, countdowns, multipliers, egg odds (T-004) |
+| 21c | Contracts/ProductCatalog | integration | `src/shared/Contracts` | The only file with developer product ids and Robux prices: 23 entries (15 on sale), grant kind, price label, flags, D-019 ladder fallback, restricted egg pets (T-069, section 4f) |
 
 MapLayout functions the UI may call (CR-4, D-032): `getBossStage(bossId): Instance?` (a Model **or** a BasePart; use
 `MapLayout.positionOf(inst)` for its position, never `.Position`), `getBossStagePosition(bossId)`, `positionOf`,
@@ -239,8 +240,8 @@ MapLayout functions the UI may call (CR-4, D-032): `getBossStage(bossId): Instan
 `waitFor` (outside Init). There is **no** `getShopStands(kind)`: to match a ProximityPrompt to a stand, walk the
 prompt's ancestors and call `getShopKindOf` (see 1f).
 
-Sprint 3 adds `Contracts/ProductCatalog.luau` (T-069: ProductKey -> product id, grant kind, price label; ids filled
-after the owner approves prices and creates the products).
+`Contracts/ProductCatalog.luau` (T-069, done sprint 3): ProductKey -> product id, grant kind, price label, flags.
+API and rules in section 4f. Ids are placeholder 0 until the owner creates the products.
 
 ```luau
 -- Contracts/RateLimit (server). Limits come from Remotes.Definitions[name].rate/burst; over-limit calls are
@@ -431,7 +432,7 @@ cleared on `PlayerRemoving`.
 | 10 | DuelRespond | C->S | `challengerUserId: number, accept: boolean` | integer + boolean; a pending challenge from that user to this player exists and is < 10 s old; on accept re-run every challenge check | 1 / 2 | Gameplay/DuelService (UI/DuelController) |
 | 11 | DuelRematch | C->S | `accept: boolean` | boolean; player's last duel ended < 10 s ago; opponent still present; both accept -> new duel, same ring | 1 / 2 | Gameplay/DuelService (UI/DuelController) |
 | 12 | SetDuelBlock | C->S | `targetUserId: number, blocked: boolean` | integer + boolean; target != self; session-only list, max 50 entries | 1 / 3 | Gameplay/DuelService (UI/DuelController) |
-| 13 | RequestPurchase | C->S | `productKey: string` | len <= 24; key in `ProductCatalog` (23 keys); `FirstWin` (GDD 8a, all products); Robux eggs need `PaidRandomAllowed` and `freeSlots >= count`; fixed pets and Starter Pack need `freeSlots >= 1`; ladder tier `== PaidTier + 1` only (D-016 #8); permanent items (AutoClicker, Vip, fits) not owned; Starter Pack once; Hype Snack / Speed Sneakers refused when the 2 h cap would be exceeded (GDD 8h); tips always allowed. This is a **prompt** gate only (UX, D-016 #9); then server calls `MarketplaceService:PromptProductPurchase(player, id)` | 0.5 / 2 | Data/MonetizationService (UI/ShopController, EggController) |
+| 13 | RequestPurchase | C->S | `productKey: string` | len <= 24; `ProductCatalog.canSell(key)` (key known, on sale, product id not 0; section 4f); `FirstWin` (GDD 8a, all products); Robux eggs need `PaidRandomAllowed` and `freeSlots >= count`; fixed pets and Starter Pack need `freeSlots >= 1`; ladder tier `== PaidTier + 1` only (D-016 #8); permanent items (AutoClicker, Vip, fits) not owned; Starter Pack once; Hype Snack / Speed Sneakers refused when the 2 h cap would be exceeded (GDD 8h); tips always allowed. This is a **prompt** gate only (UX, D-016 #9); then server calls `MarketplaceService:PromptProductPurchase(player, id)` | 0.5 / 2 | Data/MonetizationService (UI/ShopController, EggController) |
 | 14 | ClaimDailyReward | C->S | none | server UTC day > `daily.lastClaimDay`; streak resets if a day was missed; reward computed on server | 0.5 / 1 | Gameplay/RewardService (UI/RewardsController) |
 | 15 | RedeemCode | C->S | `code: string` | len 1..20, `^[%w]+$`, upper-cased; code in RewardService's server-only list and active; not redeemed before (`profile.codes`); 10 wrong codes in 10 min -> 10 min lockout | 0.33 / 2 | Gameplay/RewardService (UI/RewardsController) |
 | 16 | SetSetting | C->S | `key: string, value: boolean` | key in `T.SettingKey`; boolean; `AutoTap` needs Auto-Tap unlocked or owned, `AutoMog` needs it unlocked; no-op if unchanged | 2 / 5 | Data/DataService (UI/SettingsController) |
@@ -501,7 +502,8 @@ Saving: ProfileStore auto-save, on leave (`EndSession`), and on shutdown (Profil
 ### 3c. ProcessReceipt and receipt-id dedupe (MonetizationService, the only assigner of `ProcessReceipt`)
 1. Find the player by `receiptInfo.PlayerId`; if absent or profile not loaded -> `NotYetProcessed` (Roblox retries).
 2. If `PurchaseId` is in `profile.receipts` -> `PurchaseGranted` (already granted; idempotent).
-3. Look up the ProductKey by `ProductId`; unknown id -> log + `NotYetProcessed`.
+3. Look up the entry with `ProductCatalog.byProductId(receiptInfo.ProductId)`; nil (unknown id, or a key not on
+   sale) -> log + `NotYetProcessed`.
 4. In **one** `DataService.update`: call the registered grant fn for the key's `GrantKind` with that update's
    `data` table, then append the PurchaseId (trim to 100). If the grant returns false, nothing is recorded and the
    answer is `NotYetProcessed`. After the update, fire `EntitlementsChanged` so services refresh attributes.
@@ -509,8 +511,8 @@ Saving: ProfileStore auto-save, on leave (`EndSession`), and on shutdown (Profil
    first -> `NotYetProcessed`.
 Every valid paid receipt is delivered (D-016 #9): the FirstWin rule gates prompts, never receipts. A Robux-egg
 receipt for a player whose `PaidRandomAllowed` is false grants the egg's **disclosed non-random outcome**
-(`EconomyConfig.EGGS[eggId].restrictedGrant`, a fixed pet shown in the product description), never a random roll
-and never nothing (D-016 #4). No product bundles an egg (D-016 #5).
+(`ProductCatalog.restrictedGrant(key)`: the fixed pet, x3 for a 3-pack, also stated in the product description; the
+pet id equals `EconomyConfig.EGGS[eggId].restrictedGrant`), never a random roll and never nothing (D-016 #4). No product bundles an egg (D-016 #5).
 `TODO(verify-api)`: exact ProfileStore names (`ProfileStore.New`, `StartSessionAsync`, `Reconcile`, `Save`,
 `EndSession`, `OnSave`/`OnAfterSave`, `OnSessionEnd`) against the installed version in sprint 1.
 
@@ -613,7 +615,7 @@ products (`T.ProductKey`, listed in `Types.ProductKeys`); permanent ones are ent
 handed, synchronously; services refresh their attributes on `EntitlementsChanged`.
 | Products | GrantKind | Registered by | What the grant writes |
 |---|---|---|---|
-| MpX2, MpX4, MpX8, MpX16, MpX32 | PaidTier | MultiplierService | `entitlements.paidTier` = next tier. A receipt that is not for the next tier grants Hype Snack time (10 min per 2 R$, cap bypassed, logged) per D-019 #3; that fallback waits for the owner price review (D-021 #3) |
+| MpX2, MpX4, MpX8, MpX16, MpX32 | PaidTier | MultiplierService | `ProductCatalog.ladderGrant(key, paidTier)`: next tier -> `entitlements.paidTier` = that tier; any other receipt (owned, lower or skip-ahead tier) -> Hype Snack time, 10 min per 2 R$, cap bypassed, logged, **never the next tier** (D-019 #3, part of T-053 per D-038) |
 | HypeSnack, SpeedSneakers | Boost | MultiplierService | `boosts.hypeSec` +600 / `boosts.speedSec` +1800; time past the 2 h cap is added, never dropped (D-019 #4) |
 | AutoClicker, Vip, GoldenGlowFit, NeonIconFit | Entitlement | MonetizationService | `entitlements.autoClicker` / `vip` / `cosmetics[key]` (Vip also sets `cosmetics.VipSparkleAura`) |
 | RingLightRetriever, NeonPup | FixedPet | PetService | one copy of that pet into `pets.inventory` (may exceed 60 by up to 6) |
@@ -625,6 +627,103 @@ VIP's daily perk (+10 min Hype Snack per daily claim) is applied by RewardServic
 No grant may touch `coins`, `toolIndex`, `podsMask`, `rebirths`, `world2Unlocked` or call a coin-egg hatch; qa's GDD 8g
 test walks every grant fn and fails if one does. Removed in rev 1 (never re-add without reopening B-1): Coin Pouch /
 Bag / Vault, paid Coin Snack, pod unlocks 2-7, Skip Rebirth, Skip to World 2, Auto-Mog Early.
+
+### 4f. Product catalog (`src/shared/Contracts/ProductCatalog.luau`, T-069, D-054)
+The only place with developer product ids and Robux prices (D-038). Pure data and pure functions, no Roblox API
+calls; server and client may both require it (the client uses it for labels and descriptions only).
+
+**Product ids are placeholder `0`.** `TODO(owner)`: the owner creates each on-sale product in Creator Hub (checklist
+below) and pastes its numeric id into the entry's `productId`. An id of 0 can never be sold or granted:
+`canSell` returns `false, "NoProductId"` and `byProductId(0)` returns nil. Product ids are not secrets.
+
+| Key | Product name | Price | GrantKind | Repeatable | Next tier only | Extra fields |
+|---|---|---|---|---|---|---|
+| MpX2 | x2 Mog Points | 4 R$ | PaidTier | no (permanent) | yes | tier 1, multiplier 2 |
+| MpX4 | x4 Mog Points | 8 R$ | PaidTier | no (permanent) | yes | tier 2, multiplier 4 |
+| MpX8 | x8 Mog Points | 19 R$ | PaidTier | no (permanent) | yes | tier 3, multiplier 8 |
+| MpX16 | x16 Mog Points | 39 R$ | PaidTier | no (permanent) | yes | tier 4, multiplier 16 |
+| MpX32 | x32 Mog Points | 79 R$ | PaidTier | no (permanent) | yes | tier 5, multiplier 32 |
+| HypeSnack | Hype Snack | 2 R$ | Boost | yes | no | hypeSec 600 |
+| AutoClicker | Auto Clicker | 39 R$ | Entitlement | no (permanent) | no | |
+| RingLightRetriever | Ring Light Retriever | 29 R$ | FixedPet | yes (one copy each) | no | petId RingLightRetriever |
+| GoldenGlowFit | Golden Glow Fit | 249 R$ | Entitlement | no (permanent) | no | |
+| Vip | VIP | 99 R$ | Entitlement | no (permanent) | no | |
+| StarterPack | Starter Pack | 9 R$ | StarterPack | no (once) | no | hypeSec 1800, petId SparklePup |
+| StarEgg1 | Star Egg | 25 R$ | RobuxEgg | yes | no | eggId StarEgg, count 1, restrictedPetId StarlightCorgi |
+| StarEgg3 | Star Egg x3 | 69 R$ | RobuxEgg | yes | no | eggId StarEgg, count 3, restrictedPetId StarlightCorgi |
+| GalaxyEgg1 | Galaxy Egg | 49 R$ | RobuxEgg | yes | no | eggId GalaxyEgg, count 1, restrictedPetId NebulaFox |
+| GalaxyEgg3 | Galaxy Egg x3 | 129 R$ | RobuxEgg | yes | no | eggId GalaxyEgg, count 3, restrictedPetId NebulaFox |
+| SpeedSneakers, NeonPup, NeonIconFit, Tip5, Tip25, Tip100, Tip500, Tip1000 | - | **not on sale** (D-038) | Boost / FixedPet / Entitlement / Donation | - | no | `onSale = false`, price 0, never created, never prompted, never granted |
+
+**API (Luau types):**
+```luau
+export type Entry = {
+	key: ProductKey, productId: number, grantKind: GrantKind, onSale: boolean,
+	priceRobux: number, priceLabel: string, repeatable: boolean, nextTierOnly: boolean,
+	tier: number?, multiplier: number?, hypeSec: number?, petId: PetId?,
+	eggId: EggId?, count: number?, restrictedPetId: PetId?, displayName: string, description: string,
+}
+export type LadderGrant = { tier: number?, hypeSec: number }
+export type RestrictedGrant = { petId: PetId, count: number }
+
+ProductCatalog.Entries: { [ProductKey]: Entry }          -- all 23, frozen
+ProductCatalog.OnSaleKeys: { ProductKey }                -- the 15 on sale, in Types.ProductKeys order (shop lists)
+ProductCatalog.HYPE_FALLBACK_SEC_PER_ROBUX = 300         -- 10 min per 2 R$ (D-019 #3)
+ProductCatalog.LADDER_TIERS = 5
+function ProductCatalog.get(key: string): Entry?                       -- nil for any non-key string (raw client input)
+function ProductCatalog.byProductId(productId: number): Entry?         -- ProcessReceipt lookup; nil for 0 / unknown
+function ProductCatalog.ladderKey(tier: number): ProductKey?           -- 1..5 -> MpX2..MpX32
+function ProductCatalog.canSell(key: string): (boolean, string?)       -- false + "UnknownKey" | "NotOnSale" | "NoProductId"
+function ProductCatalog.ladderGrant(key: ProductKey, ownedTier: number): LadderGrant
+function ProductCatalog.restrictedGrant(key: ProductKey): RestrictedGrant  -- RobuxEgg keys only
+function ProductCatalog.missingIds(): { ProductKey }                   -- on-sale keys still on id 0; log once at Start
+```
+
+**Who uses what:**
+- MonetizationService (T-053): `RequestPurchase` calls `canSell(key)` first, then the section 2 #13 gates; prompts
+  `entry.productId`. Never prompts `nextTierOnly` keys unless `entry.tier == PaidTier + 1`; never re-prompts a key
+  with `repeatable = false` that the player owns. `ProcessReceipt` uses `byProductId` and dispatches on
+  `entry.grantKind`. `Start()` logs `missingIds()` as one warning (expected in Studio until the owner adds ids).
+- MultiplierService PaidTier grant: `ladderGrant(entry.key, data.entitlements.paidTier)`. If `tier` is set, write it;
+  otherwise add `hypeSec` to `boosts.hypeSec` (2 h cap bypassed for this grant) and log the event. **D-019 rule:**
+  a receipt for an owned, lower or skip-ahead tier always gives Hype Snack time and **never** the next tier, so a
+  forced 4 R$ receipt cannot climb the ladder. Boost grant: add `entry.hypeSec`.
+- PetService: FixedPet / StarterPack grant `entry.petId` (Starter Pack also `entry.hypeSec`); RobuxEgg rolls
+  `entry.count` times from `entry.eggId`, or, when `PaidRandomAllowed` is false, grants
+  `restrictedGrant(key)` (Star Egg -> Starlight Corgi, Galaxy Egg -> Nebula Fox, a 3-pack gives 3 copies; no roll,
+  pity unchanged).
+- UI (ShopController): `OnSaleKeys`, `entry.displayName`, `entry.priceLabel`, `entry.description`. Prices shown come
+  from here only. Never sends anything but the key.
+- qa: the catalog asserts at load that it has exactly one entry per `Types.ProductKeys` key (23), that `onSale`
+  matches a non-zero price, that all 5 ladder tiers exist and that filled-in ids are unique. qa adds: every
+  `restrictedPetId` equals `EconomyConfig.EGGS[eggId].restrictedGrant`, and the 8g firewall walks all 23 entries.
+
+### Owner: create developer products
+`TODO(owner)`: create these 15 developer products in Creator Hub for this experience, one per row, with the name,
+price and description below. Then send the 15 product ids to team-lead (or paste each into the matching
+`productId` in `src/shared/Contracts/ProductCatalog.luau`); integration-programmer commits them. Product ids are not
+secrets. Do **not** create Speed Sneakers, Neon Pup, Neon Icon Fit or any tip: they are outside the approved scope
+(D-038). The exact Creator Hub menu steps are not described here because they were not verified.
+
+| # | Key | Name | Price (R$) | Description |
+|---|---|---|---|---|
+| 1 | MpX2 | x2 Mog Points | 4 | x2 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. |
+| 2 | MpX4 | x4 Mog Points | 8 | x4 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. |
+| 3 | MpX8 | x8 Mog Points | 19 | x8 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. |
+| 4 | MpX16 | x16 Mog Points | 39 | x16 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. |
+| 5 | MpX32 | x32 Mog Points | 79 | x32 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. |
+| 6 | HypeSnack | Hype Snack | 2 | x2 Mog Points for 10 minutes. Boost time runs only while you are in the game. Stacks up to 2 hours. |
+| 7 | AutoClicker | Auto Clicker | 39 | Permanent. 6 automatic taps per second for Mog Points. |
+| 8 | RingLightRetriever | Ring Light Retriever | 29 | One Ring Light Retriever pet (+1.00 Mog Points bonus). Not random. |
+| 9 | GoldenGlowFit | Golden Glow Fit | 249 | Permanent. Exclusive outfit and aura. Cosmetic only, no stats. |
+| 10 | Vip | VIP | 99 | Permanent. x1.25 Mog Points, +1 pet slot, gold name tag, VIP Sparkle Aura and +10 min Hype Snack on each daily reward claim. |
+| 11 | StarterPack | Starter Pack | 9 | One time only. 30 min Hype Snack, Sparkle Pup pet (+0.30 Mog Points bonus) and Rookie Shades cosmetic. |
+| 12 | StarEgg1 | Star Egg | 25 | 1 Star Egg hatch. Odds are shown in game before you buy. Every 10th hatch with no Legendary or better is a guaranteed Legendary (90%) or Mythic (10%). If random items are not available on your account, you get Starlight Corgi (no random roll). |
+| 13 | StarEgg3 | Star Egg x3 | 69 | 3 Star Egg hatches. Odds are shown in game before you buy. Every 10th hatch with no Legendary or better is a guaranteed Legendary (90%) or Mythic (10%). If random items are not available on your account, you get 3 x Starlight Corgi (no random roll). |
+| 14 | GalaxyEgg1 | Galaxy Egg | 49 | 1 Galaxy Egg hatch. Odds are shown in game before you buy. Every 10th hatch with no Legendary or better is a guaranteed Legendary (90%) or Mythic (10%). If random items are not available on your account, you get Nebula Fox (no random roll). |
+| 15 | GalaxyEgg3 | Galaxy Egg x3 | 129 | 3 Galaxy Egg hatches. Odds are shown in game before you buy. Every 10th hatch with no Legendary or better is a guaranteed Legendary (90%) or Mythic (10%). If random items are not available on your account, you get 3 x Nebula Fox (no random roll). |
+
+Each description is the same text as the entry's `description` field in ProductCatalog. Before go-live, lawyer re-reads these texts against docs/legal.md (wording rules GDD 8e, 8h, 8i).
 
 ## 5. Analytics events (TelemetryService)
 `TODO(verify-api)`: confirm the Roblox `AnalyticsService` method names and parameters (`LogOnboardingFunnelStepEvent`,
@@ -706,7 +805,7 @@ integration ticket.** No framework (the bootstrap replaces Knit), no networking 
 
 ### Sprint-1 integration tickets
 1. Add ProfileStore to `wally.toml`, `wally install`, verify API names (section 3c).
-2. `Contracts/RateLimit.luau`, `Contracts/NumberFormat.luau` (T-004, done sprint 1). `Contracts/ProductCatalog.luau` (23 keys -> ids, grant kinds, price labels) is T-069, sprint 3, after the owner approves prices.
+2. `Contracts/RateLimit.luau`, `Contracts/NumberFormat.luau` (T-004, done sprint 1). `Contracts/ProductCatalog.luau` (23 keys -> ids, grant kinds, price labels) is T-069, done sprint 3 with placeholder ids (section 4f).
 
 ## 7. Performance budgets (target: low-end mobile, ~2 GB RAM phone, 12 players)
 | Area | Budget |
@@ -744,4 +843,5 @@ Programmers add requests through their summary; team-lead routes them here. inte
 | CR-S2a | systems (T-035, T-036) BLOCKER for the Pets panel | `PetInventory` attribute with pet uids, PetService the single writer | **Accepted** (D-051) with systems' format: `uid:petId:e` comma list, sorted by numeric uid, `""` when empty (1e). `Types.PlayerAttr.PetInventory` added. **Open: PetService must write it** (gameplay fix, sprint-2 FIX); `UI/Util/PetInventory` switches to `Attr.PetInventory` |
 | CR-S2b | systems (T-035) | Name the "Hatch x3 at Rebirth 2" constant | **Decided** (D-051): `EconomyConfig.HATCH_MULTI_REBIRTHS` (count `HATCH_MULTI_COUNT`). No alias is added; `UI/Util/GameData` must read this name (systems fix) |
 | CR-S2c | systems (T-034) | Attribute names `AutoTapUnlocked` / `AutoMogUnlocked`, written by IdleService | **Accepted** (D-051). Both in `Types.PlayerAttr`, writer IdleService (1e); SetSetting already reads them (QA-3) |
+| CR-T069 | integration (T-069, D-038) | Trim the 8 out-of-scope keys from `T.ProductKey`, or keep them | **Decided** (D-054): keep all 23 keys; the 8 have `onSale = false` in ProductCatalog. No type change, so no rename across folders. Notified: gameplay (T-053 uses `canSell`, `byProductId`, `ladderGrant`, `restrictedGrant`), systems (shop lists `OnSaleKeys`), qa (checks in 4f) |
 | CR-S2d | systems (T-033) | Telemetry hooks: `Deps.funnel` / `Deps.economy` calls from Gameplay | **Accepted and verified** (D-051): every step and coin flow in section 5 "Who calls what" is called in the merged code; nothing missing for sprint 2 |
