@@ -19,9 +19,9 @@
 --
 -- RequestPurchase (2 #13) is a prompt gate only: rate limit (RateLimit.connect), string of <= 24 chars,
 -- ProductCatalog.canSell, FirstWin, next ladder tier only, permanent items not owned, Starter Pack once, Robux eggs
--- need PaidRandomAllowed, pets need free inventory slots, Hype Snack refused past the 2 h cap, one open prompt at a
--- time. Then the SERVER calls PromptProductPurchase. There are no purchase touch pads (GDD 8b): nothing else in the
--- game opens a prompt, and no Touched or ProximityPrompt handler reaches this file.
+-- need PaidRandomAllowed, pets need free inventory slots, Hype Snack refused past the 2 h cap (live seconds from
+-- MultiplierService.getBoostSec, CR-G4), one open prompt at a time. Then the SERVER calls PromptProductPurchase.
+-- There are no purchase touch pads (GDD 8b): nothing else in the game opens a prompt, and no Touched or ProximityPrompt handler reaches this file.
 --
 -- Grant registry (4e): Gameplay services call `registerGrant(kind, fn)` in their Start(). This service registers
 -- Entitlement and Donation itself. Attributes PaidTier, Vip, AutoClickerOwned, StarterPackOwned are written here
@@ -31,6 +31,7 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 
 local ComplianceService = require(script.Parent.ComplianceService)
 local DataService = require(script.Parent.DataService)
@@ -210,6 +211,30 @@ end
 
 -- RequestPurchase ----------------------------------------------------------------------------------------
 
+-- Live Hype Snack seconds left from MultiplierService.getBoostSec (architecture 1a, CR-G4). Call-time lookup of the
+-- Gameplay module (never at file top, never in Init): the only Data -> Gameplay read. Read-only and yield-free.
+-- nil when MultiplierService or getBoostSec is not there, or the call fails: PurchaseRules then uses the profile.
+local function liveHypeSec(player: Player): number?
+	local server = ServerScriptService:FindFirstChild("Server")
+	local gameplay = server and server:FindFirstChild("Gameplay")
+	local module = gameplay and gameplay:FindFirstChild("MultiplierService")
+	if module == nil or not module:IsA("ModuleScript") then
+		return nil
+	end
+	local ok, sec = pcall(function()
+		local multiplier = (require :: any)(module)
+		local getBoostSec = multiplier and multiplier.getBoostSec
+		if type(getBoostSec) ~= "function" then
+			return nil
+		end
+		return getBoostSec(player, "Hype")
+	end)
+	if not ok or type(sec) ~= "number" then
+		return nil
+	end
+	return sec
+end
+
 local function onRequestPurchase(player: Player, key: any)
 	if typeof(key) ~= "string" or #key > PurchaseRules.KEY_MAX_LEN then
 		return
@@ -232,6 +257,7 @@ local function onRequestPurchase(player: Player, key: any)
 		paidRandomAllowed = ComplianceService.paidRandomAllowed(player),
 		inventoryCap = EconomyConfig.INVENTORY_CAP,
 		boostCapSec = EconomyConfig.BOOST_CAP_SEC,
+		hypeSecLeft = liveHypeSec(player),
 	})
 	if not ok then
 		local text = REFUSAL_TEXT[reason or ""]
