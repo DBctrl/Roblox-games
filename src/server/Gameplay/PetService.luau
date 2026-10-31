@@ -32,7 +32,7 @@ type HatchedPet = Types.HatchedPet
 local EGG_ID_MAX_LEN = 16 -- longest EggId is 9 chars
 local PET_UID_MAX_LEN = 12 -- architecture 2 #7/#8
 local DELETE_MAX = EconomyConfig.INVENTORY_CAP -- architecture 2 #8: 1..60 uids per call
-local UID_MAX = 1e12 -- keeps tostring(uid) within PET_UID_MAX_LEN
+local UID_MAX = 1e12 - 1 -- largest 12-digit uid: tostring(uid) never exceeds PET_UID_MAX_LEN (T-095)
 
 local hatchedEvent = Instance.new("BindableEvent")
 
@@ -156,9 +156,9 @@ end
 -- PetInventory attribute (architecture 1e, CR-S2a, D-051): "uid:petId:e" entries, e = 1 equipped / 0 not,
 -- sorted by numeric uid, "" when empty, at most INVENTORY_HARD_CAP entries. Display only for the client.
 local function inventoryString(data: ProfileData): string
-	local equipped: { [string]: boolean } = {}
+	local isEquipped: { [string]: boolean } = {}
 	for _, uid in data.pets.equipped do
-		equipped[uid] = true
+		isEquipped[uid] = true
 	end
 	local uids: { string } = {}
 	for uid in data.pets.inventory do
@@ -179,7 +179,7 @@ local function inventoryString(data: ProfileData): string
 		if i > EconomyConfig.INVENTORY_HARD_CAP then
 			break
 		end
-		parts[i] = `{uid}:{data.pets.inventory[uid].id}:{if equipped[uid] then "1" else "0"}`
+		parts[i] = `{uid}:{data.pets.inventory[uid].id}:{if isEquipped[uid] then "1" else "0"}`
 	end
 	return table.concat(parts, ",")
 end
