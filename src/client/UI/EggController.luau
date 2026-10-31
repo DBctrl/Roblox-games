@@ -10,9 +10,9 @@
 --   not sum to ODDS_TOTAL the panel shows no hatch button at all.
 -- * Hatch x1 always; Hatch x3 from Rebirth 2 (GDD 5). Buttons fire `HatchEgg(eggId, count)` (debounced);
 --   PetService re-checks the egg, coins, distance, inventory space and activity, and rolls on the server.
--- * Lean v1 (D-034): World 1 coin eggs only. A World 2 stand says "World 2 coming Saturday!". Robux eggs are
---   sold in sprint 3 (RequestPurchase, pity UI); until then their stand shows no buy button, and when
---   `PaidRandomAllowed` is false it says "Robux eggs aren't available on your account" (4d, cosmetic only).
+-- * Lean v1 (D-034): World 1 coin eggs only. A World 2 coin stand says "World 2 coming Saturday!". Robux egg
+--   stands (Star, Galaxy) open Panels/RobuxEggPanel instead (T-058: odds, pity rule and counter, true odds at
+--   9/10, confirmation step, restricted-account text), which this controller starts.
 -- * `HatchResult` (to the hatcher only): a short "Hatching..." beat with a Skip button, then one card per pet
 --   (name, rarity, bonus, NEW, auto-deleted). The 3D hatch animation is physics' CinematicController (T-045).
 -- * The panel closes if the character walks away from the stand.
@@ -28,6 +28,7 @@ local Types = require(Contracts:WaitForChild("Types"))
 
 local GameData = require(script.Parent.Util.GameData)
 local PetInventory = require(script.Parent.Util.PetInventory)
+local RobuxEggPanel = require(script.Parent.Panels.RobuxEggPanel)
 local Ui = require(script.Parent.Util.Ui)
 local UiEvents = require(script.Parent.Util.UiEvents)
 
@@ -228,6 +229,10 @@ local function close()
 end
 
 local function open(eggId: string)
+	if RobuxEggPanel.handles(eggId) then
+		UiEvents.fireOpenRobuxEgg(eggId) -- Robux eggs have their own screen (T-058)
+		return
+	end
 	local elements = ui
 	local egg = GameData.egg(eggId)
 	if elements == nil or egg == nil or not Ui.boolAttr(Attr.DataLoaded) then
@@ -472,6 +477,7 @@ function EggController:Start()
 	ui = elements
 	local result = buildResult()
 	resultUi = result
+	task.spawn(RobuxEggPanel.start) -- its own panel; waits for the RequestPurchase remote
 	result.skip.Activated:Connect(function()
 		revealToken += 1
 		reveal(result)
