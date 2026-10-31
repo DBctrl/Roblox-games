@@ -6,17 +6,22 @@ Owned by qa. Pure standard library, no Studio needed. Run from the repo (or work
     python3 -I tests/static/check_grants.py            # checks src/
     python3 -I tests/static/check_grants.py --strict   # PENDING (grant or service not written yet) also fails
     python3 -I tests/static/check_grants.py --selftest # runs on tests/static/selftest/grants
-      expected: "5 fail, 2 pending". BadGrants FAILs PaidTier (writes coins, no ladderGrant), Boost (yields),
+      expected: "5 fail, 2 pending". BadGrants FAILs PaidTier (writes coins, no ladderGrant), Boost (yields, and
+      calls the setSec dispatch helper with "Coin"),
       RobuxEgg (no restrictedGrant / paidRandomAllowed, calls tryHatch) and Entitlement (nested DataService.update
       through a helper); the fixture MonetizationService FAILs once (`NotYetProcessed`). GoodGrants passes
-      FixedPet and StarterPack (StarterPack names `data.coins` only inside a comment). Donation and the
+      FixedPet (reads data.rebirths for a slot count) and StarterPack (names `data.coins` only inside a comment,
+      reads data.coins, and calls the setSec dispatch helper with "Hype"). Donation and the
       ProcessReceipt owner are PENDING there by design.
 
 Heuristic, file-level review aid (not a proof). A FAIL is a lead for qa to confirm, then file in docs/qa/bugs.md.
 Checks:
   grant-firewall  every `registerGrant("Kind", fn)` in src/server: the fn body, and the bodies of local helpers it
-                  calls (3 levels), never names coins / addCoins / trySpendCoins / toolIndex / podsMask / rebirths /
-                  world2Unlocked / tryHatch / coinSec / a "Coin" boost / getCoinMultiplier / a CoinReason; never
+                  calls (3 levels), never WRITES coins / toolIndex / podsMask / rebirths / world2Unlocked / coinSec
+                  (`=`, `+=` etc., rawset; reading them is fine), never calls addCoins / trySpendCoins / tryBuyPod /
+                  tryRebirth / teleportToWorld / tryHatch / addBoost(.., "Coin") and never names a CoinReason. A
+                  kind-dispatch helper (`setSec(boosts, kind, sec)` with a `kind == "Coin"` branch) is excused only
+                  when every call to it in the grant chain passes a literal "Hype" / "Speed" kind; never
                   yields; never calls DataService.update / saveAndConfirm / waitForData (grant fns mutate the
                   `data` they are handed, synchronously, architecture 1b)
   grant-kinds     each Types.GrantKind is registered exactly once (missing = PENDING, twice = FAIL)
@@ -48,16 +53,27 @@ D038 = {
 }
 FALLBACK_KINDS = ["PaidTier", "Entitlement", "Boost", "FixedPet", "StarterPack", "RobuxEgg", "Donation"]
 
+# Coin-path state: flagged only when WRITTEN (assignment, compound assignment, rawset, table field). Reads such as
+# `EconomyConfig.petSlots(data.rebirths, vip)` are legal in a grant (sprint-3 fix round 1, QA-F10 / QA-F12).
+STATE_FIELDS = {
+    "coins": "coins",
+    "toolIndex": "toolIndex (coin-shop tool)",
+    "podsMask": "podsMask (coin-shop pod)",
+    "rebirths": "rebirths",
+    "world2Unlocked": "world2Unlocked",
+    "coinSec": "a Coin Snack boost",
+}
+_FIELDS = "|".join(STATE_FIELDS)
+WRITE_RX = re.compile(rf"\b({_FIELDS})\s*(?:[-+*/%^]|\.\.)?=(?!=)")
+RAWSET_RX = re.compile(rf"\brawset\s*\([^,]+,\s*\"({_FIELDS})\"")
+# Calls that write coin-path state, and CoinReason literals (only addCoins takes them).
 FORBIDDEN = [
-    (re.compile(r"\bcoins\b"), "coins"),
     (re.compile(r"\baddCoins\b|\btrySpendCoins\b"), "a coin API"),
-    (re.compile(r"\btoolIndex\b"), "toolIndex (coin-shop tool)"),
-    (re.compile(r"\bpodsMask\b|\btryBuyPod\b"), "podsMask (coin-shop pod)"),
-    (re.compile(r"\brebirths\b|\btryRebirth\b"), "rebirths"),
-    (re.compile(r"\bworld2Unlocked\b|\bteleportToWorld\b"), "world2Unlocked"),
+    (re.compile(r"\btryBuyPod\b"), "podsMask (coin-shop pod)"),
+    (re.compile(r"\btryRebirth\b"), "rebirths"),
+    (re.compile(r"\bteleportToWorld\b"), "world2Unlocked"),
     (re.compile(r"\btryHatch\b"), "a coin-egg hatch (tryHatch)"),
-    (re.compile(r"\bcoinSec\b|addBoost\s*\([^)]*\"Coin\""), "a Coin Snack boost"),
-    (re.compile(r"\bgetCoinMultiplier\b"), "the coin multiplier"),
+    (re.compile(r"addBoost\s*\([^)]*\"Coin\""), "a Coin Snack boost"),
     (re.compile(r"\"(?:BossWin|DuelReward|Daily|Code)\""), "a CoinReason"),
 ]
 YIELDS = re.compile(r"task\.wait|\bwait\s*\(|:\s*Wait\s*\(|Async\s*\(|\bwaitForData\b|\bsaveAndConfirm\b")
@@ -117,10 +133,10 @@ def local_functions(lines: list[str]) -> dict[str, str]:
     return out
 
 
-def with_helpers(body: str, funcs: dict[str, str], own: str | None, depth: int = 3) -> str:
-    """The body plus the bodies of same-file functions it calls, `depth` levels deep."""
+def with_helpers(body: str, funcs: dict[str, str], own: str | None, depth: int = 3) -> list[tuple[str, str]]:
+    """[(name, body)]: the grant body plus the bodies of same-file functions it calls, `depth` levels deep."""
     seen = {own} if own else set()
-    parts = [body]
+    parts = [(own or "<grant>", body)]
     frontier = [body]
     for _ in range(depth):
         nxt = []
@@ -129,10 +145,41 @@ def with_helpers(body: str, funcs: dict[str, str], own: str | None, depth: int =
                 if name in seen or not re.search(rf"(?<![\w]){re.escape(name)}\s*\(", b):
                     continue
                 seen.add(name)
-                parts.append(fb)
+                parts.append((name, fb))
                 nxt.append(fb)
         frontier = nxt
-    return "\n".join(parts)
+    return parts
+
+
+def dispatch_excused(field: str, helper: str, hbody: str, parts: list[tuple[str, str]]) -> bool:
+    """A kind-dispatch helper such as `setSec(boosts, kind, sec)` writes `coinSec` only under `kind == "Coin"`.
+    The write is excused when every call to the helper in the grant chain passes a literal kind that is not "Coin"."""
+    if field != "coinSec" or not re.search(r"==\s*\"Coin\"", hbody):
+        return False
+    calls = []
+    for name, b in parts:
+        if name == helper:
+            continue
+        for line in b.split("\n"):
+            if re.search(rf"(?<![\w]){re.escape(helper)}\s*\(", line):
+                calls.append(line)
+    if not calls:
+        return False
+    return all(re.search(r"\"(?:Hype|Speed)\"", c) and "\"Coin\"" not in c for c in calls)
+
+
+def coin_writes(parts: list[tuple[str, str]]) -> list[str]:
+    found = []
+    for name, b in parts:
+        for rx in (WRITE_RX, RAWSET_RX):
+            for m in rx.finditer(b):
+                field = m.group(1)
+                if name != "<grant>" and dispatch_excused(field, name, b, parts):
+                    continue
+                what = STATE_FIELDS[field]
+                if what not in found:
+                    found.append(what)
+    return found
 
 
 def grant_kinds() -> list[str]:
@@ -145,8 +192,8 @@ def grant_kinds() -> list[str]:
     return kinds or FALLBACK_KINDS
 
 
-def find_registrations(server: str) -> list[tuple[str, str, int, str]]:
-    """(kind, file, line, fn body incl. helpers) for every registerGrant call."""
+def find_registrations(server: str) -> list[tuple[str, str, int, str | list[tuple[str, str]]]]:
+    """(kind, file, line, [(fn name, body)] incl. helpers) for every registerGrant call; a str when unresolved."""
     regs = []
     for path in luau_files(server):
         text = strip_comments(open(path, encoding="utf-8").read())
@@ -168,8 +215,9 @@ def find_registrations(server: str) -> list[tuple[str, str, int, str]]:
     return regs
 
 
-def grant_problems(kind: str, body: str) -> list[str]:
-    probs = []
+def grant_problems(kind: str, parts: list[tuple[str, str]]) -> list[str]:
+    body = "\n".join(b for _n, b in parts)
+    probs = [f"writes {what}" for what in coin_writes(parts)]
     for rx, what in FORBIDDEN:
         if rx.search(body):
             probs.append(f"touches {what}")
@@ -192,7 +240,7 @@ def check_grants(server: str, strict: bool) -> tuple[int, int]:
     regs = find_registrations(server)
     print("grant-firewall / grant-rules (registerGrant bodies):")
     for kind, path, line, body in regs:
-        if body.startswith("\0unresolved"):
+        if isinstance(body, str):
             fails += 1
             print(f"  FAIL    {kind} ({rel(path)}:{line}): grant fn {body.split()[-1]} not found in the file")
             continue

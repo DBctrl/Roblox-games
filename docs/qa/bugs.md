@@ -94,6 +94,32 @@ named role. Line numbers are for `main` at `dde2064` (build 1)._
 - **Fix hint:** treat any version that is not an integer >= 1 as 1:
   `if type(version) ~= "number" or version ~= version or version < 1 or version % 1 ~= 0 then version = 1 end`.
 
+### QA-13 [gameplay] Duel reward log drops future-dated entries, so server clock skew lowers the cap count   S3 (sprint 3)
+- **Found by:** qa (sprint-3 fix round 1, `Duel.spec.luau` now runs against `DuelMath`).
+- **File:** `src/server/Gameplay/Util/DuelMath.luau:82` (`pruneRewardLog` keeps a row only if `row.t <= nowUnix`),
+  used by `DuelService.luau:318-320` (`payWinner`).
+- **Steps:** win 2 rewarded duels against an alt on server A, both hop to server B whose `os.time()` is a few
+  seconds behind A, win again at once.
+- **Expected:** the 2 rows still count (the QA-F13 rule: a future-dated entry counts against the caps).
+- **Actual:** both rows are pruned as "future", so the third win against the same alt is rewarded. The gain is
+  bounded by the skew (seconds) and the 5 per hour cap, hence S3, not an exploit worth S1.
+- **Fix hint:** in `pruneRewardLog` drop only rows older than the window (`nowUnix - row.t <
+  DUEL_REWARD_WINDOW_SEC`), and clamp a future `t` to `nowUnix` instead of dropping it.
+- **Test:** `Duel.spec.luau` "a log entry from the future (clock skew) still counts against the cap" FAILs until then.
+
+### QA-14 [gameplay] Robux egg grant fires HatchResult and `Hatched` even when the receipt is not committed   S3 (sprint 3)
+- **Found by:** qa (sprint-3 fix round 1 review).
+- **File:** `src/server/Gameplay/PetService.luau:608-619` (inside `grantRobuxEgg`, before `return true`).
+- **Steps:** a Robux egg receipt whose grant returns true but whose `DataService.update` does not commit (profile
+  released mid-receipt, or a `Firewall:` refusal in `PurchaseRules.applyGrant`).
+- **Expected:** a grant fn has no side effects until the commit (D-069 CR-G6: grant fns run on a copy and stay
+  side-effect-free).
+- **Actual:** the `task.defer` still sends the hatch result (pets the player does not get) and fires
+  `PetService.Hatched`, which QuestService counts as a hatch step. The retry then fires them again. No pet or
+  Robux is lost or duplicated: the profile is correct.
+- **Fix hint:** emit these after the commit, as MonetizationService already does for `RestrictedEggGrant`
+  (e.g. a post-commit hook per grant kind), or check `ProfileSchema.hasReceipt` in the deferred fn.
+
 ### QA-F7 [gameplay] No pure roll helper, so the 100,000-roll test can't reach the real roller   S3 (sprint 2)
 - **Found by:** qa (T-046). Architecture 1b/4b list no roll function; `tryHatch` needs a Player, coins and the
   60-pet cap, so 100,000 rolls through it are not possible.
@@ -112,15 +138,6 @@ named role. Line numbers are for `main` at `dde2064` (build 1)._
 - **Tests:** `tests/server/Specs/PetEquip.spec.luau` (Play mode: counts `MultiplierService.refresh` calls and
   checks M = 1 + bonus) SKIPs until then. `python3 -I tests/static/check_authority.py` checks QA-5 statically
   now (PENDING until PetService exists; `--strict` makes it fail).
-
-### QA-F10 [architecture] `NotYetProcessed` is not a Roblox enum item   S2 (sprint 3, before T-056 merges)
-- **Found by:** qa (T-081), reading architecture v1.3 3c steps 1, 3, 4 and 5 and backlog T-056 ("NotYetProcessed").
-- **Expected:** `Enum.ProductPurchaseDecision.NotProcessedYet` (the two items are `NotProcessedYet` and
-  `PurchaseGranted`).
-- **Actual:** the docs say `NotYetProcessed`. Code copied from them errors when it indexes the enum, so every
-  "not now" path (player absent, unknown id, grant refused, save not confirmed) throws instead of answering.
-- **Fix:** integration-programmer corrects architecture 3c; project-manager corrects T-056. `check_grants.py` now
-  FAILs any `NotYetProcessed` in src.
 
 ### QA-F11 [systems] A grant that writes and then fails leaves a partial grant, and the retry repeats it   S2 (sprint 3)
 - **Found by:** qa (T-081). `DataService.update` keeps changes made before an error (`DataService.luau:316-318`,
@@ -145,21 +162,6 @@ named role. Line numbers are for `main` at `dde2064` (build 1)._
   FirstWin, D-019 ladder, boost cap, restricted and allowed Robux eggs) and `GrantFirewall.spec.luau` (all 23 grant
   fns on a profile copy). Both SKIP until then. `ProductCatalog.spec.luau` and `check_grants.py` run now.
 
-### QA-12 [gameplay] EconomyConfig still puts the Galaxy Egg in World 2 (GDD rev 3, D-058, says World 1)   S3 (sprint 3)
-- **Found by:** qa (team-lead note on D-058).
-- **File:** `src/shared/Gameplay/EconomyConfig.luau:265` (`GalaxyEgg.world = 2`).
-- **Expected:** `world = 1`, odds unchanged. The qa fixture `tests/shared/Fixtures/GddEggs.luau` is updated, and
-  `PetRoll.spec` now checks `world` for Robux eggs too, so that test FAILs until EconomyConfig changes.
-
-### QA-F12 [gameplay] `EconomyConfig.duelScore` is missing (architecture 4c names it)   S3 (sprint 3, T-049)
-- **Found by:** qa (T-068). `src/shared/Gameplay/EconomyConfig.luau` has the DUEL_* constants (lines 116-127) but
-  no `duelScore` function.
-- **Ask:** add `EconomyConfig.duelScore(taps, ownRank, oppRank): number` = taps x (1 + DUEL_RANK_STEP x
-  min(ownRank, oppRank + DUEL_RANK_EDGE)), exactly 3 parameters, and have DuelService score only through it.
-- **Tests:** `Duel.spec.luau` checks the formula, the +6% edge cap, finite output on junk input, and that the
-  function takes 3 parameters, so no pet, paid or boost input can be passed (`debug.info(fn, "a")`). It SKIPs until
-  then.
-
 ### QA-F13 [gameplay] Duel and daily reward rules have no server-callable or pure entry   S3 (sprint 3, T-049/T-050/T-052)
 - **Found by:** qa (T-068). Architecture 1b gives DuelService only `isInDuel` and RewardService no functions, so
   the caps, tap clamp, claim-twice and clock-skew rules can only be reached from a client remote.
@@ -180,6 +182,18 @@ named role. Line numbers are for `main` at `dde2064` (build 1)._
   daily claim's server clock and VIP rule now (PENDING until the services exist).
 
 ## Closed
+
+### QA-F10 [architecture] `NotYetProcessed` is not a Roblox enum item   S2   (closed in sprint 3 fix round 1)
+- architecture 3c says `NotProcessedYet` (D-069); `MonetizationService.luau` uses `Enum.ProductPurchaseDecision.NotProcessedYet`
+  everywhere and `check_grants.py` finds no `NotYetProcessed` in src (PASS). Leftovers, text only: backlog T-056
+  criterion (`docs/backlog.md:384`, project-manager) and a comment at `src/server/Gameplay/Util/Deps.luau:56`.
+
+### QA-12 [gameplay] EconomyConfig put the Galaxy Egg in World 2   S3   (closed in sprint 3 fix round 1)
+- `EconomyConfig.luau:323` now has `GalaxyEgg.world = 1` (D-057/D-058), odds unchanged.
+
+### QA-F12 [gameplay] `EconomyConfig.duelScore` was missing   S3   (closed in sprint 3 fix round 1)
+- `EconomyConfig.duelScore(taps, ownRank, oppRank)` exists (`EconomyConfig.luau:425`) and DuelService scores only
+  through it (`DuelService.luau:346-347`). `Duel.spec.luau` checks the formula and the 3-parameter arity.
 
 ### QA-6 [qa] Static checker false positives   S3   (fixed in build 1 check)
 - **File:** `tests/static/check_handlers.py`.
