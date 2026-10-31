@@ -13,18 +13,9 @@ export type Activity = "Idle" | "BossFight" | "Hatching" | "Duel"
 
 export type MpSource = "Tap" | "AutoTap" | "Pod"
 
-export type CoinReason =
-	"BossWin"
-	| "DuelReward"
-	| "Daily"
-	| "Code"
-	| "Pack"
-	| "StarterPack"
-	| "Tool"
-	| "Pod"
-	| "Egg"
-	| "Rebirth"
+export type CoinReason = "BossWin" | "DuelReward" | "Daily" | "Code" | "Tool" | "Pod" | "Egg" | "Rebirth"
 
+-- "Coin" (Coin Snack) is free-only since GDD rev 1: daily D5, codes and events. Never sold.
 export type BoostKind = "Hype" | "Coin" | "Speed"
 
 export type SettingKey =
@@ -53,38 +44,38 @@ export type HatchedPet = {
 	pity: boolean, -- true if the pity rule forced this result
 }
 
--- Monetization (34 developer products; ids and prices live in Contracts/ProductCatalog, sprint 1) ----
+-- Monetization (23 developer products, GDD rev 1 section 8; ids and prices live in Contracts/ProductCatalog) --
+-- Option A (D-021): Robux never buys coins. No product grants, multiplies or discounts coins, grants a coin-shop
+-- item (tool, pod, rebirth, portal) or grants an egg hatch outside the two Robux eggs.
 
 export type ProductKey =
+	-- Multiplier ladder, permanent, next tier only (5)
 	"MpX2"
 	| "MpX4"
 	| "MpX8"
 	| "MpX16"
 	| "MpX32"
+	-- Timed boosts (2)
 	| "HypeSnack"
-	| "CoinSnack"
 	| "SpeedSneakers"
-	| "CoinPouch"
-	| "CoinBag"
-	| "CoinVault"
-	| "PodUnlock2"
-	| "PodUnlock3"
-	| "PodUnlock4"
-	| "PodUnlock5"
-	| "PodUnlock6"
-	| "PodUnlock7"
+	-- Automation, permanent (1)
 	| "AutoClicker"
-	| "AutoMogEarly"
-	| "SkipRebirth"
-	| "SkipWorld2"
+	-- Fixed pets, one copy per purchase (2)
+	| "RingLightRetriever"
+	| "NeonPup"
+	-- Exclusive cosmetics, permanent (2)
 	| "GoldenGlowFit"
 	| "NeonIconFit"
+	-- VIP, permanent (1)
 	| "Vip"
+	-- Starter Pack, once (1): 30 min Hype Snack + Sparkle Pup + Rookie Shades, no coins
 	| "StarterPack"
+	-- Robux eggs, policy-gated (4)
 	| "StarEgg1"
 	| "StarEgg3"
 	| "GalaxyEgg1"
 	| "GalaxyEgg3"
+	-- Donations (5)
 	| "Tip5"
 	| "Tip25"
 	| "Tip100"
@@ -93,16 +84,13 @@ export type ProductKey =
 
 -- Which service's registered grant function handles a product (MonetizationService.registerGrant).
 export type GrantKind =
-	"PaidTier" -- MonetizationService itself
-	| "Entitlement" -- MonetizationService itself (Vip, AutoClicker, AutoMogEarly, fits)
-	| "Boost" -- MultiplierService
-	| "CoinPack" -- RewardService
-	| "PodUnlock" -- ShopService
-	| "SkipRebirth" -- RebirthService
-	| "SkipWorld2" -- ZoneService
-	| "StarterPack" -- RewardService
-	| "RobuxEgg" -- PetService
-	| "Donation" -- MonetizationService itself
+	"PaidTier" -- MultiplierService: MpX2..MpX32 (non-next-tier receipt fallback = Hype Snack time, D-019 #3)
+	| "Entitlement" -- MonetizationService itself: AutoClicker, Vip, GoldenGlowFit, NeonIconFit
+	| "Boost" -- MultiplierService: HypeSnack, SpeedSneakers
+	| "FixedPet" -- PetService: RingLightRetriever, NeonPup
+	| "StarterPack" -- PetService: pet + boost seconds + cosmetic flag in one update
+	| "RobuxEgg" -- PetService: StarEgg1/3, GalaxyEgg1/3 (restricted players get the fixed fallback pet)
+	| "Donation" -- MonetizationService itself: Tip5..Tip1000
 
 -- Analytics -----------------------------------------------------------------------------------------
 
@@ -129,7 +117,6 @@ export type ProfileData = {
 	mp: number,
 	lifetimeMp: number,
 	rebirths: number,
-	skipRebirthsUsed: number,
 	toolIndex: number, -- 1..12
 	podsMask: number, -- bit i (1..7) = pod i owned
 	world2Unlocked: boolean,
@@ -146,9 +133,8 @@ export type ProfileData = {
 		paidTier: number, -- 0..5 (0 = none, 5 = x32)
 		vip: boolean,
 		autoClicker: boolean,
-		autoMogEarly: boolean,
 		starterPack: boolean,
-		cosmetics: { [string]: boolean },
+		cosmetics: { [string]: boolean }, -- GoldenGlowFit, NeonIconFit, RookieShades, VipSparkleAura, ...
 	},
 	boosts: { hypeSec: number, coinSec: number, speedSec: number }, -- remaining seconds, online only
 	daily: { streak: number, lastClaimDay: number }, -- lastClaimDay = UTC days since epoch, 0 = never
@@ -238,6 +224,34 @@ local Types = {}
 
 Types.PROFILE_SCHEMA_VERSION = 1
 
+-- Every ProductKey, in GDD section 8 order (23). ProductCatalog and qa's firewall test (GDD 8g) walk this list.
+local productKeys: { ProductKey } = {
+	"MpX2",
+	"MpX4",
+	"MpX8",
+	"MpX16",
+	"MpX32",
+	"HypeSnack",
+	"SpeedSneakers",
+	"AutoClicker",
+	"RingLightRetriever",
+	"NeonPup",
+	"GoldenGlowFit",
+	"NeonIconFit",
+	"Vip",
+	"StarterPack",
+	"StarEgg1",
+	"StarEgg3",
+	"GalaxyEgg1",
+	"GalaxyEgg3",
+	"Tip5",
+	"Tip25",
+	"Tip100",
+	"Tip500",
+	"Tip1000",
+}
+Types.ProductKeys = table.freeze(productKeys)
+
 -- Attributes on the Player instance. One writer each (see docs/architecture.md section 1e).
 Types.PlayerAttr = table.freeze({
 	-- DataService
@@ -256,7 +270,6 @@ Types.PlayerAttr = table.freeze({
 	PaidTier = "PaidTier", -- number 0..5
 	Vip = "Vip", -- boolean
 	AutoClickerOwned = "AutoClickerOwned", -- boolean
-	AutoMogEarlyOwned = "AutoMogEarlyOwned", -- boolean
 	StarterPackOwned = "StarterPackOwned", -- boolean
 	-- ComplianceService
 	PaidRandomAllowed = "PaidRandomAllowed", -- boolean, false until checked (fail closed)
@@ -270,7 +283,7 @@ Types.PlayerAttr = table.freeze({
 	Multiplier = "Multiplier", -- number, M after clamp (display only)
 	CoinMultiplier = "CoinMultiplier", -- number
 	HypeEndsAt = "HypeEndsAt", -- number, server time, 0 = off
-	CoinSnackEndsAt = "CoinSnackEndsAt", -- number, server time, 0 = off
+	CoinSnackEndsAt = "CoinSnackEndsAt", -- number, server time, 0 = off (free-only boost: daily D5, codes, events)
 	SpeedEndsAt = "SpeedEndsAt", -- number, server time, 0 = off
 	-- RankService
 	Rank = "Rank", -- number 1..12

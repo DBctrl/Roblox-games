@@ -1,10 +1,10 @@
 # Architecture: "Aura Up!" (working title) v1
-_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1, 2026-10-31 (D-016).
-Replaces the Candy Factory Tycoon architecture (D-009, superseded by D-011). Built from docs/gdd.md v1 (D-015).
+_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1.1, 2026-10-31
+(D-017, updated for GDD rev 1 / option A in D-023). Built from docs/gdd.md rev 1, approved by the owner (D-021).
 Source of truth for code contracts: `src/shared/Contracts/Remotes.luau` and `src/shared/Contracts/Types.luau`.
-Both must match this file. Applies lawyer rulings D-016 (policy gate, next-tier-only ladder, restricted receipts).
-The GDD is still awaiting owner approval (gate 1): prices, odds and tiers can change, and
-they live only in config (`EconomyConfig`, product catalogue), so a change there does not change this contract._
+Both must match this file. Applies lawyer rulings D-016 and D-019 (policy gate on Robux eggs only, next-tier-only
+ladder, restricted receipts). Prices are still placeholders (gate 5): they live only in config (`EconomyConfig`,
+`ProductCatalog`), so a price change does not change this contract._
 
 ## 0. Ground rules
 - **Server-authoritative everything.** MP, coins, the multiplier, boss wins, egg rolls, pity, duel scores, duel
@@ -62,13 +62,13 @@ Upward calls are done by **inversion**, never by requiring up:
 | 6 | ZoneService | world | `src/server/World` | Current world per player, portal, pod presence, stage/stand/ring lookup + distance checks, ring reservation, teleports |
 | 7 | CharacterService | world | `src/server/World` | Single writer of Humanoid `WalkSpeed`/`JumpPower`; applies rank looks/fits (accessories); movement locks |
 | 8 | ActivityService | gameplay | `src/server/Gameplay` | Per-player exclusive activity (Idle/BossFight/Hatching/Duel); `Activity` attribute |
-| 9 | MultiplierService | gameplay | `src/server/Gameplay` | The multiplier pipeline (section 4a), timed boosts, coin multiplier |
+| 9 | MultiplierService | gameplay | `src/server/Gameplay` | The multiplier pipeline (section 4a), timed boosts, coin multiplier (free Coin Snack only), ladder + boost grants |
 | 10 | RankService | gameplay | `src/server/Gameplay` | Rank ladder from lifetime MP, rank-up moment, look id |
-| 11 | ShopService | gameplay | `src/server/Gameplay` | `BuyTool`, `BuyPod` (coins), pod/tool grants from receipts |
-| 12 | PetService | gameplay | `src/server/Gameplay` | `HatchEgg` (coin eggs), Robux egg grants, server roll + pity, inventory, `EquipPet`, `DeletePets` |
+| 11 | ShopService | gameplay | `src/server/Gameplay` | `BuyTool`, `BuyPod` (coins only; no Robux path to tools or pods, GDD 8g) |
+| 12 | PetService | gameplay | `src/server/Gameplay` | `HatchEgg` (coin eggs, open to all, D-021), Robux egg / fixed pet / Starter Pack grants, server roll + pity, inventory, `EquipPet`, `DeletePets` |
 | 13 | BossService | gameplay | `src/server/Gameplay` | `RequestBossFight`, 3 s fight, coins, `FirstWin`, best-boss income |
 | 14 | TapService | gameplay | `src/server/Gameplay` | `TapBatch`, tap token bucket, the only MP adder (`addMp`) |
-| 15 | RebirthService | gameplay | `src/server/Gameplay` | `RequestRebirth`, atomic reset, Skip Rebirth grant |
+| 15 | RebirthService | gameplay | `src/server/Gameplay` | `RequestRebirth`, atomic reset (coins only; no paid skip) |
 | 16 | IdleService | gameplay | `src/server/Gameplay` | 1 Hz loop: pod MP/s, Auto-Tap, Auto-Mog |
 | 17 | DuelService | gameplay | `src/server/Gameplay` | Duel state machine, challenges, anti-grief, scoring, rewards (section 4c) |
 | 18 | QuestService | gameplay | `src/server/Gameplay` | Tutorial quest chain, `TutorialDone` (unlocks duels + Starter Pack pop-up timing) |
@@ -158,7 +158,7 @@ function TapService.setTapSink(player: Player, sink: ((accepted: number) -> ())?
 
 -- RebirthService
 RebirthService.Rebirthed: RBXScriptSignal -- (player: Player, rebirths: number)
-function RebirthService.tryRebirth(player: Player, skip: boolean): (boolean, string?)
+function RebirthService.tryRebirth(player: Player): (boolean, string?) -- rev 1: `skip` argument removed
 function RebirthService.getCost(player: Player): number
 
 -- IdleService: no public functions.
@@ -228,11 +228,11 @@ coalesced), so attribute traffic stays inside the budget in section 7.
 |---|---|---|
 | DataLoaded, Coins, Mp, LifetimeMp, Rebirths | boolean, number x4 | DataService |
 | SettingDuelRequests, SettingShowOwnLook, SettingAutoDeleteCommons, SettingHideFromDonorBoard, SettingAutoTap, SettingAutoMog | boolean | DataService |
-| PaidTier (0..5), Vip, AutoClickerOwned, AutoMogEarlyOwned, StarterPackOwned | number, boolean x4 | MonetizationService |
+| PaidTier (0..5), Vip, AutoClickerOwned, StarterPackOwned | number, boolean x3 | MonetizationService |
 | PaidRandomAllowed | boolean (false until checked) | ComplianceService |
 | WorldId (1/2), World2Unlocked, CurrentPod (0 = none) | number, boolean, number | ZoneService |
 | Activity | `T.Activity` | ActivityService |
-| Multiplier, CoinMultiplier, HypeEndsAt, CoinSnackEndsAt, SpeedEndsAt | number (EndsAt = `workspace:GetServerTimeNow()` time, 0 = off) | MultiplierService |
+| Multiplier, CoinMultiplier, HypeEndsAt, CoinSnackEndsAt (free-only boost), SpeedEndsAt | number (EndsAt = `workspace:GetServerTimeNow()` time, 0 = off) | MultiplierService |
 | Rank, LookId | number, string | RankService |
 | ToolIndex, PodsMask (bit i = pod i owned) | number | ShopService |
 | EquippedPets (comma list of pet ids, for rendering), PetCount, PetSlots, PityStarEgg, PityGalaxyEgg | string, number x4 | PetService |
@@ -288,7 +288,7 @@ cleared on `PlayerRemoving`.
 | 10 | DuelRespond | C->S | `challengerUserId: number, accept: boolean` | integer + boolean; a pending challenge from that user to this player exists and is < 10 s old; on accept re-run every challenge check | 1 / 2 | Gameplay/DuelService (UI/DuelController) |
 | 11 | DuelRematch | C->S | `accept: boolean` | boolean; player's last duel ended < 10 s ago; opponent still present; both accept -> new duel, same ring | 1 / 2 | Gameplay/DuelService (UI/DuelController) |
 | 12 | SetDuelBlock | C->S | `targetUserId: number, blocked: boolean` | integer + boolean; target != self; session-only list, max 50 entries | 1 / 3 | Gameplay/DuelService (UI/DuelController) |
-| 13 | RequestPurchase | C->S | `productKey: string` | key in `ProductCatalog`; `FirstWin` (GDD 8a, all products); Robux eggs need `PaidRandomAllowed` and `freeSlots >= count`; ladder tier `== PaidTier + 1` only (D-016 #8); permanent items not owned; Starter Pack once; Skip Rebirth only for rebirths 1-10; Skip World 2 only if not unlocked. This is a **prompt** gate only (UX, D-016 #9); then server calls `MarketplaceService:PromptProductPurchase(player, id)` | 0.5 / 2 | Data/MonetizationService (UI/ShopController, EggController) |
+| 13 | RequestPurchase | C->S | `productKey: string` | len <= 24; key in `ProductCatalog` (23 keys); `FirstWin` (GDD 8a, all products); Robux eggs need `PaidRandomAllowed` and `freeSlots >= count`; fixed pets and Starter Pack need `freeSlots >= 1`; ladder tier `== PaidTier + 1` only (D-016 #8); permanent items (AutoClicker, Vip, fits) not owned; Starter Pack once; Hype Snack / Speed Sneakers refused when the 2 h cap would be exceeded (GDD 8h); tips always allowed. This is a **prompt** gate only (UX, D-016 #9); then server calls `MarketplaceService:PromptProductPurchase(player, id)` | 0.5 / 2 | Data/MonetizationService (UI/ShopController, EggController) |
 | 14 | ClaimDailyReward | C->S | none | server UTC day > `daily.lastClaimDay`; streak resets if a day was missed; reward computed on server | 0.5 / 1 | Gameplay/RewardService (UI/RewardsController) |
 | 15 | RedeemCode | C->S | `code: string` | len 1..20, `^[%w]+$`, upper-cased; code in RewardService's server-only list and active; not redeemed before (`profile.codes`); 10 wrong codes in 10 min -> 10 min lockout | 0.33 / 2 | Gameplay/RewardService (UI/RewardsController) |
 | 16 | SetSetting | C->S | `key: string, value: boolean` | key in `T.SettingKey`; boolean; `AutoTap` needs Auto-Tap unlocked or owned, `AutoMog` needs it unlocked; no-op if unchanged | 2 / 5 | Data/DataService (UI/SettingsController) |
@@ -312,16 +312,16 @@ friendly "please rejoin" message. Nothing else touches DataStoreService for play
 | schemaVersion | number | 1 | no | DataService (migrations) |
 | coins | number | 0 | yes | addCoins / trySpendCoins |
 | mp / lifetimeMp | number | 0 / 0 | mp yes / lifetime no | TapService |
-| rebirths / skipRebirthsUsed | number | 0 / 0 | no | RebirthService |
+| rebirths | number | 0 | no | RebirthService |
 | toolIndex | number 1..12 | 1 | yes (to 1) | ShopService, RebirthService |
 | podsMask | number (bits 1..7) | 0 | no | ShopService |
-| world2Unlocked | boolean | false | no | ZoneService (Rebirth 3 or Skip World 2) |
+| world2Unlocked | boolean | false | no | ZoneService (Rebirth 3 only) |
 | firstWin | boolean | false | no | BossService |
 | rank | number 1..12 | 1 | no | RankService |
 | quest | { step: number, done: boolean } | {1, false} | no | QuestService |
 | pets | { inventory: { [uid]: { id: string } }, equipped: { string }, nextUid: number } | empty, 1 | no | PetService |
 | pity | { [EggId]: number } | {} | no | PetService (Robux eggs only) |
-| entitlements | { paidTier: number, vip, autoClicker, autoMogEarly, starterPack: boolean, cosmetics: { [string]: boolean } } | 0 / false | no | MonetizationService |
+| entitlements | { paidTier: number, vip, autoClicker, starterPack: boolean, cosmetics: { [string]: boolean } } | 0 / false | no | MonetizationService (flags); `paidTier` by MultiplierService's PaidTier grant; `starterPack` + `cosmetics.RookieShades` by PetService's StarterPack grant |
 | boosts | { hypeSec, coinSec, speedSec: number } (remaining seconds, tick only while online) | 0 | no | MultiplierService |
 | daily | { streak: number, lastClaimDay: number (UTC days since epoch) } | 0, 0 | no | RewardService |
 | codes | { [string]: boolean } | {} | no | RewardService |
@@ -431,12 +431,16 @@ clients show the same clock.
   `false` (**fail closed**: Robux eggs hidden and unsellable).
 - Server gate: `RequestPurchase` rejects `StarEgg1/3`, `GalaxyEgg1/3` when not allowed. Client gate: EggController
   hides Robux egg stands/UI from the attribute (cosmetic; the server gate is the real one).
-- **Coin eggs: blocker B-1 (D-016), owner picks.** Option A (stop selling coins): drop `CoinPouch/Bag/Vault`,
-  `CoinSnack`, the Starter Pack coins and VIP's daily x2 coins from the catalogue; coin eggs stay ungated; no
-  remote change. Option B (gate coin eggs): `EconomyConfig.COIN_EGGS_POLICY_GATED = true`, `HatchEgg` also needs
-  `PaidRandomAllowed`, and restricted players get a non-random path, which needs one new remote (e.g.
-  `BuyPetDirect`) through a Contract request. Until the owner picks, PetService reads the flag (default `true`,
-  the safe reading) so no restricted player can hatch a coin egg.
+- **Coin eggs: B-1 resolved, option A (approved by owner, D-021; lawyer D-019 #1).** Robux never buys coins, so
+  coin eggs are unpaid random items and are **open to every player, with no policy gate**. The D-017 default coin-egg
+  gate is removed: `EconomyConfig.COIN_EGGS_POLICY_GATED = false` (default), and T-029 removes the gate code from
+  PetService. `HatchEgg` never reads `PaidRandomAllowed`. Robux eggs stay gated as above.
+  - **Policy default:** Robux eggs fail closed (hidden and unsellable until `PaidRandomAllowed` is true); coin eggs,
+    the Day-4 free hatch and event eggs are ungated.
+  - **Under A (current):** 23 products, no coin product of any kind (section 4e). Any future product, bundle or perk
+    that grants, multiplies or discounts coins, or grants a coin-shop item, reopens B-1 (D-019 #1).
+  - **Under B (not chosen):** `COIN_EGGS_POLICY_GATED = true`, `HatchEgg` also needs `PaidRandomAllowed`, and
+    restricted players need a non-random path (one new remote, e.g. `BuyPetDirect`, via a Contract request).
 - Pity UI (D-016 #3): when `Pity<Egg> == 9`, EggController shows the real next-hatch odds (Legendary 90 / Mythic
   10) and the pity rule in words; the counter is saved in `profile.pity`.
 - Group Crew Cap (D-016 #6, owner decision): if approved, a server `IsInGroup` check at join grants a cosmetic only;
@@ -444,8 +448,25 @@ clients show the same clock.
 
 ### 4e. Purchase prompts and the FirstWin gate (MonetizationService)
 Every prompt is server-initiated after `RequestPurchase` validation, so the FirstWin rule (GDD 8a) cannot be
-bypassed by a modified client. The client never calls `PromptProductPurchase`. All 34 GDD products are developer
-products (`T.ProductKey`); permanent ones are entitlements in the profile, re-applied on join.
+bypassed by a modified client. The client never calls `PromptProductPurchase`. All 23 GDD rev 1 products are developer
+products (`T.ProductKey`, listed in `Types.ProductKeys`); permanent ones are entitlements in the profile, re-applied on join.
+
+**Product -> grant kind -> registering service (option A, D-021).** Grant fns mutate only the `data` table they are
+handed, synchronously; services refresh their attributes on `EntitlementsChanged`.
+| Products | GrantKind | Registered by | What the grant writes |
+|---|---|---|---|
+| MpX2, MpX4, MpX8, MpX16, MpX32 | PaidTier | MultiplierService | `entitlements.paidTier` = next tier. A receipt that is not for the next tier grants Hype Snack time (10 min per 2 R$, cap bypassed, logged) per D-019 #3; that fallback waits for the owner price review (D-021 #3) |
+| HypeSnack, SpeedSneakers | Boost | MultiplierService | `boosts.hypeSec` +600 / `boosts.speedSec` +1800; time past the 2 h cap is added, never dropped (D-019 #4) |
+| AutoClicker, Vip, GoldenGlowFit, NeonIconFit | Entitlement | MonetizationService | `entitlements.autoClicker` / `vip` / `cosmetics[key]` (Vip also sets `cosmetics.VipSparkleAura`) |
+| RingLightRetriever, NeonPup | FixedPet | PetService | one copy of that pet into `pets.inventory` (may exceed 60 by up to 6) |
+| StarterPack | StarterPack | PetService | Sparkle Pup into inventory + `boosts.hypeSec` +1800 + `cosmetics.RookieShades` + `entitlements.starterPack`. **No coins, no pod, no egg** |
+| StarEgg1/3, GalaxyEgg1/3 | RobuxEgg | PetService | server roll + pity; restricted players get `restrictedGrant` (Starlight Corgi / Nebula Fox, x3 for a 3-pack) |
+| Tip5, Tip25, Tip100, Tip500, Tip1000 | Donation | MonetizationService | `stats.robuxDonated`, banner + name-tag colour only |
+
+VIP's daily perk (+10 min Hype Snack per daily claim) is applied by RewardService at claim time, not by a grant.
+No grant may touch `coins`, `toolIndex`, `podsMask`, `rebirths`, `world2Unlocked` or call a coin-egg hatch; qa's GDD 8g
+test walks every grant fn and fails if one does. Removed in rev 1 (never re-add without reopening B-1): Coin Pouch /
+Bag / Vault, paid Coin Snack, pod unlocks 2-7, Skip Rebirth, Skip to World 2, Auto-Mog Early.
 
 ## 5. Analytics events (TelemetryService)
 `TODO(verify-api)`: confirm the Roblox `AnalyticsService` method names and parameters (`LogOnboardingFunnelStepEvent`,
@@ -453,7 +474,7 @@ products (`T.ProductKey`); permanent ones are entitlements in the profile, re-ap
 | Event | Kind | When | Value |
 |---|---|---|---|
 | Spawn, FirstTap, FirstWin, FirstUpgrade, FirstPod, FirstRankUp, FirstEgg, TutorialDone, FirstRebirth | onboarding funnel, once per profile (`milestones`) | the first time it happens | seconds since `firstJoinUnix` (also logged as custom `TimeTo<Step>`) |
-| Coins source | economy | BossWin, DuelReward, Daily, Code, Pack, StarterPack | amount |
+| Coins source | economy | BossWin, DuelReward, Daily, Code (never a Robux source, GDD 8g) | amount |
 | Coins sink | economy | Tool, Pod, Egg, Rebirth | amount |
 | Purchase | custom | each granted receipt (after dedupe) | Robux price; product key as event name suffix |
 | DuelPlayed / DuelWon / DuelDraw / DuelForfeit | custom | duel end | duel seconds |
@@ -486,7 +507,7 @@ integration ticket.** No framework (the bootstrap replaces Knit), no networking 
 
 ### Sprint-1 integration tickets
 1. Add ProfileStore to `wally.toml`, `wally install`, verify API names (section 3c).
-2. `Contracts/ProductCatalog.luau` (34 keys -> ids, grant kinds), `Contracts/RateLimit.luau`, `Contracts/NumberFormat.luau`.
+2. `Contracts/RateLimit.luau`, `Contracts/NumberFormat.luau` (T-004, done sprint 1). `Contracts/ProductCatalog.luau` (23 keys -> ids, grant kinds, price labels) is T-069, sprint 3, after the owner approves prices.
 
 ## 7. Performance budgets (target: low-end mobile, ~2 GB RAM phone, 12 players)
 | Area | Budget |
@@ -510,3 +531,4 @@ Programmers add requests through their summary; team-lead routes them here. inte
 
 | # | From | Request | Status |
 |---|---|---|---|
+| CR-1 | team-lead (T-003, D-021) | Rev 1 product list (23) and option A: trim `ProductKey`/`GrantKind`, drop Skip Rebirth / Skip World 2 / Auto-Mog Early / coin products, remove the default coin-egg gate | **Done** (sprint 1, commit "T-003"). Notified: gameplay (`tryRebirth(player)` has no `skip`; `GrantKind` "PaidTier"/"Boost" registered by MultiplierService, "FixedPet"/"StarterPack"/"RobuxEgg" by PetService; `COIN_EGGS_POLICY_GATED = false`; `CoinReason` lost "Pack"/"StarterPack"), systems (`AutoMogEarlyOwned` attribute and `skipRebirthsUsed`/`entitlements.autoMogEarly` fields gone; schema stays v1, nothing shipped yet; `RequestPurchase` rules in section 2 #13) |
