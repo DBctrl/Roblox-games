@@ -10,6 +10,8 @@
 --   only if it returns true, does not error or yield, and leaves every coin-firewall field (GDD 8g) unchanged, the
 --   copy is merged back into the live profile in place, together with the PurchaseId. Otherwise the live profile
 --   is untouched, so a failed grant can be retried safely (no half grant, no recorded id without its grant).
+--   The grant fn may return a second value, an `OnCommitted` hook (CR-I8, D-071). applyGrant passes it back only
+--   when the grant was merged; MonetizationService runs it once, after the save holding the PurchaseId is confirmed.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -20,7 +22,11 @@ local Types = require(ReplicatedStorage.Shared.Contracts.Types)
 type ProfileData = Types.ProfileData
 type Entry = ProductCatalog.Entry
 
-export type GrantFn = (player: Player, key: Types.ProductKey, data: ProfileData) -> boolean
+-- CR-I8 (D-071): run once after the save that holds the PurchaseId is confirmed. May read the live profile; never
+-- writes it. Everything the player sees about a grant (toasts, HatchResult, effects) goes here.
+export type OnCommitted = (player: Player) -> ()
+-- Returning `true` alone (no hook) stays valid; `false` discards any hook.
+export type GrantFn = (player: Player, key: Types.ProductKey, data: ProfileData) -> (boolean, OnCommitted?)
 
 export type PromptContext = {
 	firstWin: boolean, -- BossService FirstWin (GDD 8a)
@@ -153,8 +159,9 @@ function PurchaseRules.firewallBreach(before: ProfileData, after: ProfileData): 
 	return nil
 end
 
--- ProcessReceipt step 4 (architecture 3c), run inside ONE DataService.update mutator. Returns ok, reason.
--- ok = the grant and the PurchaseId are both in `data` now. Not ok = `data` is exactly as before.
+-- ProcessReceipt step 4 (architecture 3c), run inside ONE DataService.update mutator. Returns ok, reason, hook.
+-- ok = the grant and the PurchaseId are both in `data` now. Not ok = `data` is exactly as before and hook is nil.
+-- hook = the grant fn's OnCommitted (CR-I8), only when ok; nil if the fn returned none (one-value grants stay valid).
 -- Reasons: Duplicate (id already recorded: nothing changes, caller confirms the save) | GrantError | GrantRefused
 -- | Firewall:<field>.
 function PurchaseRules.applyGrant(
@@ -163,25 +170,26 @@ function PurchaseRules.applyGrant(
 	entry: Entry,
 	purchaseId: string,
 	grant: GrantFn
-): (boolean, string?)
+): (boolean, string?, OnCommitted?)
 	if ProfileSchema.hasReceipt(data, purchaseId) then
-		return false, "Duplicate"
+		return false, "Duplicate", nil
 	end
 	local copy = ProfileSchema.deepCopy(data)
-	local called, granted = pcall(grant, player, entry.key, copy)
+	local called, granted, onCommitted = pcall(grant, player, entry.key, copy)
 	if not called then
-		return false, "GrantError"
+		return false, "GrantError", nil
 	end
 	if granted ~= true then
-		return false, "GrantRefused"
+		return false, "GrantRefused", nil
 	end
 	local breach = PurchaseRules.firewallBreach(data, copy)
 	if breach then
-		return false, `Firewall:{breach}`
+		return false, `Firewall:{breach}`, nil
 	end
 	ProfileSchema.addReceipt(copy, purchaseId)
 	PurchaseRules.mergeInPlace(data :: any, copy :: any)
-	return true, nil
+	local hook: OnCommitted? = if type(onCommitted) == "function" then onCommitted else nil
+	return true, nil, hook
 end
 
 -- True if a saved snapshot (DataService.saveAndConfirm predicate) holds `purchaseId`.
@@ -192,7 +200,11 @@ end
 
 -- Entitlement grant kind (registered by MonetizationService itself, 4e). Permanent flags only; a receipt for a
 -- flag the player already has is still delivered (true) and changes nothing.
-function PurchaseRules.entitlementGrant(_player: Player, key: Types.ProductKey, data: ProfileData): boolean
+function PurchaseRules.entitlementGrant(
+	_player: Player,
+	key: Types.ProductKey,
+	data: ProfileData
+): (boolean, OnCommitted?)
 	local ent = data.entitlements
 	if key == "AutoClicker" then
 		ent.autoClicker = true
@@ -202,20 +214,24 @@ function PurchaseRules.entitlementGrant(_player: Player, key: Types.ProductKey, 
 	elseif key == "GoldenGlowFit" or key == "NeonIconFit" then
 		ent.cosmetics[key] = true
 	else
-		return false -- not an Entitlement product
+		return false, nil -- not an Entitlement product
 	end
-	return true
+	return true, nil
 end
 
 -- Donation grant kind (no tip is on sale in v1, D-038; kept so the registry is complete). Adds the catalog price
 -- to the donor stat only: banner and name-tag colour, nothing else (GDD 8i).
-function PurchaseRules.donationGrant(_player: Player, key: Types.ProductKey, data: ProfileData): boolean
+function PurchaseRules.donationGrant(
+	_player: Player,
+	key: Types.ProductKey,
+	data: ProfileData
+): (boolean, OnCommitted?)
 	local entry = ProductCatalog.get(key)
 	if entry == nil or entry.grantKind ~= "Donation" or entry.priceRobux <= 0 then
-		return false
+		return false, nil
 	end
 	data.stats.robuxDonated = finiteOr(data.stats.robuxDonated, 0) + entry.priceRobux
-	return true
+	return true, nil
 end
 
 return table.freeze(PurchaseRules)
