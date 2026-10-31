@@ -3,9 +3,32 @@
 -- The ONLY writer of Humanoid WalkSpeed / JumpPower (architecture 1e). Other services ask through
 -- setSpeedMultiplier (Speed Sneakers) and reason-keyed setMovementLocked (duels, cinematics).
 -- State is kept per player, not per character, and re-applied on every respawn.
--- setLook is a stub until T-038 (rank looks and fits).
+-- T-038: rank looks and fits. Clones cartoon Accessory templates from ServerStorage.Assets.Looks
+-- (names in Shared.World.MapLayout) onto the avatar, at most 6, never edits the body, and wears
+-- nothing when the player turns the ShowOwnLook setting off. Nil-safe: missing art = no accessory.
 
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local MapLayout = require(Shared:WaitForChild("World"):WaitForChild("MapLayout"))
+local Types = require(Shared:WaitForChild("Contracts"):WaitForChild("Types"))
+
+local PlayerAttr = Types.PlayerAttr
+
+local LOOK_MARK_ATTR = "AuraUpLook" -- set on every accessory this service adds (so only ours are removed)
+local APPEARANCE_WAIT_SEC = 8
+local STARTER_FIT = "StarterFit"
+-- Attributes whose change can add or remove a fit (or hide the look).
+local LOOK_TRIGGER_ATTRS = {
+	PlayerAttr.SettingShowOwnLook,
+	PlayerAttr.FirstWin,
+	PlayerAttr.Vip,
+	PlayerAttr.StarterPackOwned,
+}
+
+type DataServiceLike = { getData: (player: Player) -> Types.ProfileData? }
 
 local BASE_WALK_SPEED = 16 -- Roblox default
 local BASE_JUMP_POWER = 50 -- Roblox default
@@ -61,12 +84,172 @@ local function apply(player: Player)
 	end
 end
 
+-- Looks and fits ----------------------------------------------------------------------------------
+
+local dataService: DataServiceLike? = nil
+local warnedTemplates: { [string]: true } = {}
+
+-- Finds a Data-folder service by name (World may require Data, architecture 1a). nil if absent.
+local function findDataModule(name: string): any
+	local serverRoot = script.Parent and script.Parent.Parent
+	local dataFolder = serverRoot and serverRoot:FindFirstChild("Data")
+	local module = dataFolder and dataFolder:FindFirstChild(name)
+	if module and module:IsA("ModuleScript") then
+		local ok, service = pcall(require :: any, module)
+		if ok and typeof(service) == "table" then
+			return service
+		end
+	end
+	return nil
+end
+
+local function warnTemplateOnce(id: string, why: string)
+	if warnedTemplates[id] then
+		return
+	end
+	warnedTemplates[id] = true
+	warn(`[CharacterService] Look template "{id}" {why}; skipping it until builder adds it`)
+end
+
+local function templateOf(id: string): Instance?
+	local assets = ServerStorage:FindFirstChild(MapLayout.LOOK_ASSETS_FOLDER)
+	local looks = assets and assets:FindFirstChild(MapLayout.LOOK_TEMPLATES_FOLDER)
+	local template = looks and looks:FindFirstChild(id)
+	if template == nil then
+		warnTemplateOnce(
+			id,
+			`is missing from ServerStorage.{MapLayout.LOOK_ASSETS_FOLDER}.{MapLayout.LOOK_TEMPLATES_FOLDER}`
+		)
+	end
+	return template
+end
+
+local function ownsFit(player: Player, fitId: string, data: Types.ProfileData?): boolean
+	local ent = data and data.entitlements
+	local cosmetics = ent and ent.cosmetics
+	if cosmetics and cosmetics[fitId] == true then
+		return true
+	end
+	if fitId == STARTER_FIT then
+		return player:GetAttribute(PlayerAttr.FirstWin) == true or (data ~= nil and data.firstWin == true)
+	elseif fitId == "RookieShades" then
+		return player:GetAttribute(PlayerAttr.StarterPackOwned) == true
+	elseif fitId == "VipSparkleAura" then
+		return player:GetAttribute(PlayerAttr.Vip) == true or (ent ~= nil and ent.vip == true)
+	end
+	return false
+end
+
+-- Template ids to wear, in priority order: owned paid fits, then the rank look, then the free
+-- Starter Fit. The 6-accessory cap cuts from the end, so a bought fit is never dropped.
+local function wearList(player: Player, lookId: string?): { string }
+	local data = if dataService then dataService.getData(player) else nil
+	local list = {}
+	for _, fitId in MapLayout.FIT_IDS do
+		if fitId ~= STARTER_FIT and ownsFit(player, fitId, data) then
+			table.insert(list, fitId)
+		end
+	end
+	if lookId and table.find(MapLayout.LOOK_IDS, lookId) then
+		table.insert(list, lookId)
+	end
+	if ownsFit(player, STARTER_FIT, data) then
+		table.insert(list, STARTER_FIT)
+	end
+	return list
+end
+
+-- A clean copy of one template accessory: no scripts, no physics. nil if it is not a usable accessory.
+local function cleanAccessory(source: Instance): Accessory?
+	if not source:IsA("Accessory") then
+		return nil
+	end
+	local handle = source:FindFirstChild("Handle")
+	if handle == nil or not handle:IsA("BasePart") then
+		return nil
+	end
+	local copy = (source :: Accessory):Clone()
+	for _, d in copy:GetDescendants() do
+		if d:IsA("LuaSourceContainer") then
+			d:Destroy()
+		elseif d:IsA("BasePart") then
+			d.Anchored = false
+			d.CanCollide = false
+			d.CanTouch = false
+			d.CanQuery = false
+			d.Massless = true
+		end
+	end
+	copy:SetAttribute(LOOK_MARK_ATTR, true)
+	return copy
+end
+
+local function removeLook(character: Model)
+	for _, child in character:GetChildren() do
+		if child:IsA("Accessory") and child:GetAttribute(LOOK_MARK_ATTR) == true then
+			child:Destroy()
+		end
+	end
+end
+
+local function applyLook(player: Player)
+	local state = states[player]
+	local character = player.Character
+	local humanoid = humanoidOf(player)
+	if state == nil or character == nil or humanoid == nil then
+		return
+	end
+	removeLook(character)
+	if player:GetAttribute(PlayerAttr.SettingShowOwnLook) == false then
+		return -- the player turned "show my own avatar look" off (GDD 7)
+	end
+	local worn = 0
+	for _, id in wearList(player, state.lookId) do
+		local template = templateOf(id)
+		if template then
+			local skipped = false
+			-- Only Accessory children count. Clothing, BodyColors, scales and meshes are ignored on
+			-- purpose: looks never edit the body (GDD 7, 11).
+			for _, child in template:GetChildren() do
+				if worn >= MapLayout.MAX_LOOK_ACCESSORIES then
+					return
+				end
+				local accessory = cleanAccessory(child)
+				if accessory then
+					humanoid:AddAccessory(accessory)
+					worn += 1
+				else
+					skipped = true
+				end
+			end
+			if skipped then
+				warnTemplateOnce(id, "holds something that is not an Accessory with a Handle")
+			end
+		end
+	end
+end
+
 local function onCharacterAdded(player: Player, character: Model)
 	local humanoid = character:WaitForChild("Humanoid", HUMANOID_WAIT_SEC)
 	if humanoid == nil or player.Character ~= character then
 		return
 	end
 	apply(player)
+	-- Wait for the avatar's own appearance first, so it does not replace our accessories.
+	if not player:HasAppearanceLoaded() then
+		local loaded = false
+		local conn = player.CharacterAppearanceLoaded:Connect(function()
+			loaded = true
+		end)
+		local deadline = os.clock() + APPEARANCE_WAIT_SEC
+		while not loaded and os.clock() < deadline and player.Character == character do
+			task.wait(0.2)
+		end
+		conn:Disconnect()
+	end
+	if player.Character == character and character:IsDescendantOf(workspace) then
+		applyLook(player)
+	end
 end
 
 local function onPlayerAdded(player: Player)
@@ -74,6 +257,11 @@ local function onPlayerAdded(player: Player)
 		return -- already handled (joined between Connect and GetPlayers)
 	end
 	stateOf(player)
+	for _, attr in LOOK_TRIGGER_ATTRS do
+		player:GetAttributeChangedSignal(attr):Connect(function()
+			applyLook(player)
+		end)
+	end
 	player.CharacterAdded:Connect(function(character)
 		onCharacterAdded(player, character)
 	end)
@@ -85,6 +273,20 @@ end
 function CharacterService:Init() end
 
 function CharacterService:Start()
+	local data = findDataModule("DataService")
+	if data and typeof(data.getData) == "function" then
+		dataService = data :: DataServiceLike
+	else
+		warn("[CharacterService] DataService not found; only attribute-based fits are worn")
+	end
+	-- Exclusive fits bought later (sprint 3). Connect only when the module and signal exist.
+	local monetization = findDataModule("MonetizationService")
+	local changed = monetization and monetization.EntitlementsChanged
+	if typeof(changed) == "RBXScriptSignal" then
+		changed:Connect(function(player: Player)
+			applyLook(player)
+		end)
+	end
 	Players.PlayerAdded:Connect(onPlayerAdded)
 	Players.PlayerRemoving:Connect(function(player)
 		states[player] = nil
@@ -143,14 +345,21 @@ function CharacterService.isMovementLocked(player: Player): boolean
 	return state ~= nil and isLocked(state)
 end
 
--- Stores the rank look id. Applying accessories (max 6, respects ShowOwnLook) is T-038.
+-- Sets the rank look (a MapLayout.LOOK_IDS name) and re-dresses the avatar with it plus owned fits:
+-- cartoon accessories only, at most 6, none while ShowOwnLook is off. Kept across respawns.
+-- Calling it again with the same id re-applies (use it after granting a fit). Never yields.
 function CharacterService.setLook(player: Player, lookId: string)
 	if typeof(lookId) ~= "string" or #lookId > 64 then
+		return
+	end
+	if not table.find(MapLayout.LOOK_IDS, lookId) then
+		warn(`[CharacterService] Unknown look id "{lookId}" (not in MapLayout.LOOK_IDS)`)
 		return
 	end
 	local state = stateOf(player)
 	if state then
 		state.lookId = lookId
+		applyLook(player)
 	end
 end
 

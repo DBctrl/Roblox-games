@@ -27,6 +27,29 @@ ServerStorage are ignored, so templates may carry tags too.
                                              "DuelWinsWeek" | "Donors")
   Podium       Part (top surface)            Place (number 1..3)                    Glow Town hub only.
 
+Lean v1 (D-034, T-038), World 1 only. Builder must create in Glow Town (WorldId 1):
+  - 7 BossStage (BOSS_IDS[1]), 5 Pod (PodIndex 1..5), 1 Spawn, ShopStand Tools + Robux,
+  - EggStand "BasicEgg" and "ShinyEgg" (W1_EGG_IDS; "StarEgg" stand later, T-073),
+  - 1 Portal with ToWorldId = 2. Touching it only shows "World 2 coming Saturday!" (no teleport
+    until T-092). Make it a Part touch box (CanCollide off, CanTouch on) in front of the arch.
+  Pod boxes: make the box cover the whole chair area and at least 8 studs tall from the floor, so
+  a standing or seated character's HumanoidRootPart is inside it.
+
+=== LOOK AND FIT TEMPLATES FOR BUILDER (server only) ==============================================
+  ServerStorage > Assets (Folder) > Looks (Folder) > <one Folder or Model per id below>
+  Each template holds ONLY Accessory instances (each with a Part named "Handle" and an Attachment
+  matching an avatar attachment, e.g. HatAttachment, FaceFrontAttachment, BodyFrontAttachment,
+  WaistCenterAttachment). Auras, trails and beams go INSIDE an accessory's Handle.
+  Anything else (Shirt, Pants, BodyColors, scale values, CharacterMesh, scripts) is ignored:
+  looks are cartoon accessories layered on the avatar and never edit the body (GDD 7, 11).
+  Keep each rank look to at most 3 accessories and each fit to 1. At most 6 are worn in total.
+  Rank looks (LOOK_IDS, = EconomyConfig.RANKS[i].lookId):
+    FreshSpawn, CombRookie, GlowStarter, DripApprentice, StyleScout, MainCharacter,
+    Trendsetter, AuraFarmer, Icon, SpotlightLegend, StarMogger, SupremeMogger
+  Fits (FIT_IDS): StarterFit (first boss win), RookieShades (Starter Pack), GoldenGlowFit,
+    NeonIconFit (exclusive cosmetics), VipSparkleAura (VIP)
+===================================================================================================
+
 WorldId: 1 = Glow Town, 2 = Neon Runway. Positions: follow WORLDS below (studs, Y = ground level).
 They are a guide, except that the spawn must face Sleepy Sid at 15 studs (GDD 9) and boss stages
 sit 50 studs apart along the stage row (T-019). If you move something, update this file in a
@@ -86,6 +109,38 @@ MapLayout.BOSS_IDS = table.freeze({
 		"KingShine",
 	}),
 })
+
+-- Egg stands builder places in World 1 for the lean v1 (D-034). StarEgg (Robux) follows in T-073.
+MapLayout.W1_EGG_IDS = table.freeze({ "BasicEgg", "ShinyEgg" })
+
+-- Rank look template names, rank order. Must equal EconomyConfig.RANKS[i].lookId (qa checks).
+MapLayout.LOOK_IDS = table.freeze({
+	"FreshSpawn",
+	"CombRookie",
+	"GlowStarter",
+	"DripApprentice",
+	"StyleScout",
+	"MainCharacter",
+	"Trendsetter",
+	"AuraFarmer",
+	"Icon",
+	"SpotlightLegend",
+	"StarMogger",
+	"SupremeMogger",
+})
+
+-- Fit template names, in wear priority (paid first, so a bought fit is never cut by the cap).
+MapLayout.FIT_IDS = table.freeze({
+	"GoldenGlowFit",
+	"NeonIconFit",
+	"VipSparkleAura",
+	"RookieShades",
+	"StarterFit",
+})
+
+MapLayout.LOOK_ASSETS_FOLDER = "Assets" -- ServerStorage.Assets
+MapLayout.LOOK_TEMPLATES_FOLDER = "Looks" -- ServerStorage.Assets.Looks
+MapLayout.MAX_LOOK_ACCESSORIES = 6
 
 MapLayout.SPAWN_TO_FIRST_STAGE = 15 -- studs (GDD 9: Sleepy Sid 15 studs from spawn)
 MapLayout.STAGE_SPACING = 50 -- studs between boss stages (T-019)
@@ -248,6 +303,37 @@ function MapLayout.cframeOf(inst: Instance?): CFrame?
 	return nil
 end
 
+-- Oriented box of a map item (Part: its CFrame and Size; Model: its bounding box). nil otherwise
+-- or when a Model has nothing streamed in.
+function MapLayout.boxOf(inst: Instance?): (CFrame?, Vector3?)
+	if inst == nil then
+		return nil, nil
+	end
+	if inst:IsA("BasePart") then
+		return inst.CFrame, inst.Size
+	elseif inst:IsA("Model") then
+		if inst:FindFirstChildWhichIsA("BasePart", true) == nil then
+			return nil, nil
+		end
+		local cf, size = inst:GetBoundingBox()
+		return cf, size
+	end
+	return nil, nil
+end
+
+-- True when `point` is inside the item's box, grown by `pad` studs on every side.
+function MapLayout.isInsideBox(inst: Instance?, point: Vector3, pad: number?): boolean
+	local cf, size = MapLayout.boxOf(inst)
+	if cf == nil or size == nil then
+		return false
+	end
+	local localPoint = cf:PointToObjectSpace(point)
+	local half = size / 2 + Vector3.one * (pad or 0)
+	return math.abs(localPoint.X) <= half.X
+		and math.abs(localPoint.Y) <= half.Y
+		and math.abs(localPoint.Z) <= half.Z
+end
+
 function MapLayout.getWorldIdOf(inst: Instance): number?
 	return numberAttr(inst, Attr.WorldId)
 end
@@ -325,6 +411,16 @@ end
 
 function MapLayout.getEggIdOf(inst: Instance): string?
 	return stringAttr(inst, Attr.EggId)
+end
+
+-- World of an egg from the layout table (nil for an unknown id). Safe before streaming.
+function MapLayout.getEggWorld(eggId: string): number?
+	for worldId, world in MapLayout.WORLDS do
+		if world.eggStands[eggId] ~= nil then
+			return worldId
+		end
+	end
+	return nil
 end
 
 function MapLayout.getEggStandPosition(eggId: string): Vector3?
