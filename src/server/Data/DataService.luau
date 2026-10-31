@@ -339,7 +339,7 @@ function DataService.addCoins(player: Player, amount: number, _reason: Types.Coi
 		data.stats.totalCoinsEarned += amount
 		balance = data.coins
 	end)
-	-- TelemetryService.economy(player, "Source", amount, reason) is wired in T-033.
+	-- Economy telemetry is logged by the caller (TelemetryService.economy), never here, so it is not counted twice.
 	return if ok then balance else 0
 end
 
@@ -362,7 +362,7 @@ function DataService.trySpendCoins(player: Player, amount: number, _reason: Type
 			spent = true
 		end
 	end)
-	-- TelemetryService.economy(player, "Sink", amount, reason) is wired in T-033.
+	-- Economy telemetry is logged by the caller (TelemetryService.economy), never here, so it is not counted twice.
 	return spent
 end
 
