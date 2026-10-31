@@ -14,6 +14,11 @@
 --   6. DataService.saveAndConfirm waits for a save that contains the PurchaseId. Only then PurchaseGranted.
 --      Timeout or session end -> NotProcessedYet; the id stays in memory, so the retry goes to step 3, and if the
 --      session ends unsaved both the grant and the id are lost together, so the retry grants once.
+--   Post-commit (CR-I8, D-071): an applied grant is kept in `pendingCommit[purchaseId]` (with the grant fn's
+--   optional OnCommitted hook) BEFORE the save is awaited. The first confirmed save for that id in this server
+--   (step 6, or a step-3 retry after an unconfirmed save) removes the entry, runs the hook once in task.spawn +
+--   pcall, then sends the "Thanks!" toast, the Purchase effect and the purchase telemetry. A step-3 retry with no
+--   pending entry sends nothing. Entries are dropped on PlayerRemoving and never run for a player who has left.
 --   Any error anywhere -> NotProcessedYet. Every valid paid receipt is delivered, before FirstWin too (D-016 #9).
 --   A restricted player's Robux-egg receipt is delivered as the fixed pet by PetService's RobuxEgg grant (4d).
 --
@@ -47,6 +52,17 @@ local Types = require(ReplicatedStorage.Shared.Contracts.Types)
 
 type ProfileData = Types.ProfileData
 type GrantFn = PurchaseRules.GrantFn
+type OnCommitted = PurchaseRules.OnCommitted
+
+-- A grant that is in the profile but whose save is not confirmed yet (CR-I8). Everything the player is told about
+-- it waits here until the save is confirmed.
+type PendingCommit = {
+	player: Player,
+	entry: ProductCatalog.Entry,
+	hook: OnCommitted?,
+	ladderFallback: boolean,
+	restrictedEgg: boolean,
+}
 
 local Attr = Types.PlayerAttr
 
@@ -71,6 +87,7 @@ local MonetizationService = {}
 
 local grants: { [Types.GrantKind]: GrantFn } = {}
 local inFlight: { [string]: boolean } = {} -- PurchaseIds being processed in this server
+local pendingCommit: { [string]: PendingCommit } = {} -- applied grants awaiting a confirmed save (CR-I8)
 local promptOpenAt: { [Player]: number } = {}
 local entitlementsChangedEvent: BindableEvent
 local notifyRemote: RemoteEvent? = nil
@@ -111,6 +128,55 @@ local function confirmSaved(player: Player, purchaseId: string): boolean
 	end, SAVE_CONFIRM_SEC)
 end
 
+-- The post-commit point (CR-I8 step 3): runs once per pending grant, only after its save is confirmed.
+local function runCommitted(player: Player, pending: PendingCommit)
+	if player.Parent ~= Players then
+		return -- left already: the message is lost with the session (CR-I8 step 4)
+	end
+	local entry = pending.entry
+	local hook = pending.hook
+	if hook then
+		task.spawn(function()
+			local ok = pcall(hook, player)
+			if not ok then
+				-- No error text: it may carry player details. The decision is already PurchaseGranted.
+				warn(`MonetizationService: OnCommitted hook for {entry.key} failed`)
+			end
+		end)
+	end
+	TelemetryService.custom(player, "Purchase", entry.priceRobux)
+	if pending.ladderFallback then
+		TelemetryService.custom(player, "LadderFallback", entry.priceRobux) -- D-019 #3: granted as Hype Snack time
+	end
+	if pending.restrictedEgg then
+		TelemetryService.custom(player, "RestrictedEggGrant", entry.priceRobux) -- 4d: granted as the fixed pet
+	end
+	notify(player, "Success", `Thanks! {entry.displayName} is yours.`)
+	local effect = effectRemote
+	if effect then
+		effect:FireClient(
+			player,
+			"Purchase",
+			{ userId = player.UserId, productKey = entry.key } :: Types.EffectPayload
+		)
+	end
+end
+
+-- Waits for the save holding `purchaseId`; on success runs that id's pending post-commit work (if any) exactly once.
+-- Used by the first attempt and by every already-granted (dedupe) path, so a retry after an unconfirmed save still
+-- shows the player their purchase, and a retry after it was shown sends nothing.
+local function confirmAndCommit(player: Player, purchaseId: string): Enum.ProductPurchaseDecision
+	if not confirmSaved(player, purchaseId) then
+		return Enum.ProductPurchaseDecision.NotProcessedYet -- the pending entry stays for the retry
+	end
+	local pending = pendingCommit[purchaseId]
+	if pending and pending.player == player then
+		pendingCommit[purchaseId] = nil
+		runCommitted(player, pending)
+	end
+	return Enum.ProductPurchaseDecision.PurchaseGranted
+end
+
 -- 3c steps 2, 4, 5 for one catalog entry: dedupe, the grant in one update, then wait for the save that holds it.
 local function grantEntryInner(
 	player: Player,
@@ -124,9 +190,7 @@ local function grantEntryInner(
 
 	-- Already granted earlier (this session or a previous one): never grant again, just make sure it is saved.
 	if PurchaseRules.savedHasReceipt(data :: any, purchaseId) then
-		return if confirmSaved(player, purchaseId)
-			then Enum.ProductPurchaseDecision.PurchaseGranted
-			else Enum.ProductPurchaseDecision.NotProcessedYet
+		return confirmAndCommit(player, purchaseId)
 	end
 
 	local grant = grants[entry.grantKind]
@@ -138,53 +202,43 @@ local function grantEntryInner(
 	end
 
 	local applied, reason = false, "NotRun"
+	local hook: OnCommitted? = nil
 	local tierBefore, tierAfter = 0, 0
 	local updated = DataService.update(player, function(live)
 		tierBefore = tonumber(live.entitlements.paidTier) or 0
-		applied, reason = PurchaseRules.applyGrant(live, player, entry, purchaseId, grant)
+		applied, reason, hook = PurchaseRules.applyGrant(live, player, entry, purchaseId, grant)
 		tierAfter = tonumber(live.entitlements.paidTier) or 0
 	end)
 	if reason == "Duplicate" then
 		-- Raced with another grant of the same id between the check above and the update: already applied.
-		return if confirmSaved(player, purchaseId)
-			then Enum.ProductPurchaseDecision.PurchaseGranted
-			else Enum.ProductPurchaseDecision.NotProcessedYet
+		return confirmAndCommit(player, purchaseId)
 	end
 	if not updated or not applied then
 		warn(`MonetizationService: grant for {entry.key} not applied ({reason}); not processed yet`)
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
 
+	-- State, not a promise to the player: refreshed right after the update (CR-I8 step 5).
 	writeAttributes(player)
 	entitlementsChangedEvent:Fire(player)
-	-- Section 5 (CR-G6): which special grant this was. Logged only after the save below holds it.
-	local ladderFallback = entry.grantKind == "PaidTier" and not (tierAfter > tierBefore)
-	local restrictedEgg = entry.grantKind == "RobuxEgg" and not ComplianceService.paidRandomAllowed(player)
 
-	if not confirmSaved(player, purchaseId) then
+	-- Everything the player is told waits for the confirmed save (CR-I8). Stored BEFORE the wait, so a retry that
+	-- confirms the save later (the already-granted path) still runs it once. Section 5 (CR-G6) telemetry rides along.
+	pendingCommit[purchaseId] = {
+		player = player,
+		entry = entry,
+		hook = hook,
+		ladderFallback = entry.grantKind == "PaidTier" and not (tierAfter > tierBefore),
+		restrictedEgg = entry.grantKind == "RobuxEgg" and not ComplianceService.paidRandomAllowed(player),
+	}
+
+	local decision = confirmAndCommit(player, purchaseId)
+	if decision ~= Enum.ProductPurchaseDecision.PurchaseGranted then
 		warn(
 			`MonetizationService: save for {entry.key} not confirmed; not processed yet (retry will not regrant)`
 		)
-		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
-
-	TelemetryService.custom(player, "Purchase", entry.priceRobux)
-	if ladderFallback then
-		TelemetryService.custom(player, "LadderFallback", entry.priceRobux) -- D-019 #3: granted as Hype Snack time
-	end
-	if restrictedEgg then
-		TelemetryService.custom(player, "RestrictedEggGrant", entry.priceRobux) -- 4d: granted as the fixed pet
-	end
-	notify(player, "Success", `Thanks! {entry.displayName} is yours.`)
-	local effect = effectRemote
-	if effect then
-		effect:FireClient(
-			player,
-			"Purchase",
-			{ userId = player.UserId, productKey = entry.key } :: Types.EffectPayload
-		)
-	end
-	return Enum.ProductPurchaseDecision.PurchaseGranted
+	return decision
 end
 
 local function processReceiptInner(info: { [string]: any }): Enum.ProductPurchaseDecision
@@ -206,9 +260,7 @@ local function processReceiptInner(info: { [string]: any }): Enum.ProductPurchas
 
 	-- Already granted earlier (this session or a previous one): never grant again, just make sure it is saved.
 	if PurchaseRules.savedHasReceipt(data :: any, purchaseId) then
-		return if confirmSaved(player, purchaseId)
-			then Enum.ProductPurchaseDecision.PurchaseGranted
-			else Enum.ProductPurchaseDecision.NotProcessedYet
+		return confirmAndCommit(player, purchaseId)
 	end
 
 	local entry = ProductCatalog.byProductId(productId)
@@ -324,7 +376,8 @@ end
 -- Public API (architecture 1b) ------------------------------------------------------------------------
 
 -- Gameplay services call this in Start(). `fn` mutates the `data` table it is handed, synchronously (no yields,
--- no DataService calls); it returns false if it cannot grant now (the receipt is retried later).
+-- no DataService calls); it returns false if it cannot grant now (the receipt is retried later). It may return a
+-- second value, an OnCommitted hook run once after the save is confirmed (CR-I8); `true` alone stays valid.
 function MonetizationService.registerGrant(kind: Types.GrantKind, fn: GrantFn)
 	assert(type(fn) == "function", "MonetizationService.registerGrant: fn must be a function")
 	if grants[kind] ~= nil then
@@ -414,6 +467,12 @@ function MonetizationService:Start()
 	end)
 	Players.PlayerRemoving:Connect(function(player: Player)
 		promptOpenAt[player] = nil
+		-- CR-I8 step 4: the grant's message is lost with the session; the next server's retry brings a fresh hook.
+		for purchaseId, pending in pendingCommit do
+			if pending.player == player then
+				pendingCommit[purchaseId] = nil
+			end
+		end
 	end)
 	for _, player in Players:GetPlayers() do
 		if DataService.isLoaded(player) then
