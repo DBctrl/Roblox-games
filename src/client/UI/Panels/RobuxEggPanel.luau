@@ -7,8 +7,8 @@
 -- * Opens from a Robux EggStand prompt (EggController routes it here) or the shop's "Odds Info" button. Opening
 --   never buys.
 -- * Odds come from EconomyConfig.EGGS[eggId].pets through GameData, the same integer weights PetService rolls.
---   The pity rule is written out in words: "Every 10th hatch with no Legendary or better is a guaranteed
---   Legendary (90%) or Mythic (10%)." The counter "Pity: 7/10" is the server's Pity<Egg> attribute (saved per egg).
+--   The pity rule is the lawyer's exact `ProductCatalog.PITY_RULE` (T-071, D-056), the same words as the product
+--   listing. The counter "Pity: 7/10" is the server's Pity<Egg> attribute (saved per egg).
 -- * True odds (legal 2.2): when the counter is 9/10 the table shows the real next-hatch odds (the Legendary and
 --   Mythic pets at 90% / 10%, every other pet 0%) instead of the base table, on this screen and in the
 --   confirmation step. A 3-pack lists the odds for each of its 3 hatches.
@@ -41,8 +41,7 @@ local PANEL_NAME = "RobuxEgg"
 local ROW_PX = 52
 local BUY_DEBOUNCE_SEC = 2.5 -- RequestPurchase allows 0.5/s, burst 2
 local DEFAULT_PITY_AT = 10
-local PITY_RULE =
-	"Every 10th hatch with no Legendary or better is a guaranteed Legendary (90%) or Mythic (10%)."
+local PITY_RULE = ProductCatalog.PITY_RULE -- lawyer's exact wording (T-071); never a local copy
 local PACK_NOTE = "Each of the 3 hatches uses these odds. Pity can trigger inside the pack."
 local RESTRICTED_TEXT = "Robux eggs aren't available on your account"
 
@@ -93,11 +92,6 @@ local function pityCount(eggId: string): number
 	return if info then math.floor(Ui.numAttr(info.pityAttr, 0)) else 0
 end
 
-local function rarityOf(petId: string): string
-	local pet = GameData.pet(petId)
-	return if pet then pet.rarity else "Common"
-end
-
 local function baseOdds(egg: GameData.Egg): Odds
 	local out: Odds = {}
 	for _, row in egg.pets do
@@ -106,38 +100,41 @@ local function baseOdds(egg: GameData.Egg): Odds
 	return out
 end
 
--- The forced pity roll: Legendary pets share 90% and Mythic pets 10% (in proportion to their base weights);
--- every other pet is 0%.
-local function pityOdds(egg: GameData.Egg): Odds
-	local legendaryWeight, mythicWeight = GameData.pityWeights()
-	local legendarySum, mythicSum = 0, 0
-	for _, row in egg.pets do
-		local rarity = rarityOf(row.petId)
-		if rarity == "Legendary" then
-			legendarySum += row.weight
-		elseif rarity == "Mythic" then
-			mythicSum += row.weight
-		end
+-- Every pet of the egg in its own order, with its weight in `rows` (0% when absent, legal 2.2), or nil when the
+-- EconomyConfig helper is missing (the odds are then shown as unavailable, never guessed).
+local function displayOdds(egg: GameData.Egg, rows: { GameData.EggPet }?): Odds?
+	if rows == nil then
+		return nil
+	end
+	local weights: { [string]: number } = {}
+	for _, row in rows do
+		weights[row.petId] = (weights[row.petId] or 0) + row.weight
 	end
 	local out: Odds = {}
 	for _, row in egg.pets do
-		local rarity = rarityOf(row.petId)
-		local weight = 0
-		if rarity == "Legendary" and legendarySum > 0 then
-			weight = legendaryWeight * row.weight / legendarySum
-		elseif rarity == "Mythic" and mythicSum > 0 then
-			weight = mythicWeight * row.weight / mythicSum
-		end
-		table.insert(out, { petId = row.petId, weight = weight })
+		table.insert(out, { petId = row.petId, weight = weights[row.petId] or 0 })
 	end
 	return out
+end
+
+-- The forced pity roll (EconomyConfig.pityOdds, CR-G5): Legendary 90% / Mythic 10%, every other pet 0%.
+local function pityOdds(egg: GameData.Egg): Odds?
+	return displayOdds(egg, GameData.pityOdds(egg.id))
+end
+
+-- The next hatch at the player's pity counter (EconomyConfig.nextHatchOdds, CR-G5): the same rows PetService rolls.
+local function nextHatchOdds(egg: GameData.Egg, pity: number): Odds?
+	return displayOdds(egg, GameData.nextHatchOdds(egg.id, pity))
 end
 
 local function oddsText(weight: number): string
 	return if weight <= 0 then "0%" else NumberFormat.oddsPercent(weight)
 end
 
-local function oddsLine(odds: Odds): string
+local function oddsLine(odds: Odds?): string
+	if odds == nil then
+		return "odds unavailable"
+	end
 	local parts = {}
 	for _, row in odds do
 		local pet = GameData.pet(row.petId)
@@ -161,7 +158,8 @@ local function packOddsText(egg: GameData.Egg, count: number): string
 	local pityIndex = pityHatchIndex(c, p, count)
 	local base = oddsLine(baseOdds(egg))
 	if count == 1 then
-		return if pityIndex then `Your next hatch (pity): {oddsLine(pityOdds(egg))}` else `Odds: {base}`
+		local next = oddsLine(nextHatchOdds(egg, c))
+		return if pityIndex then `Your next hatch (pity): {next}` else `Odds: {next}`
 	end
 	local lines = {}
 	for i = 1, count do
@@ -315,15 +313,15 @@ local function render()
 	local c, p = pityCount(egg.id), pityAt(egg.id)
 	elements.pity.Text = `Pity: {c}/{p}`
 	elements.rule.Text = PITY_RULE
-	if not egg.oddsValid then
+	local odds = if egg.oddsValid then nextHatchOdds(egg, c) else nil
+	if odds == nil then
 		addNote(elements.list, 1, "Odds unavailable - try again later")
 		elements.buy1.Visible = false
 		elements.buy3.Visible = false
 		return
 	end
 	local owned = PetInventory.ownedIds()
-	local atPity = c == p - 1
-	local odds = if atPity then pityOdds(egg) else baseOdds(egg)
+	local atPity = pityHatchIndex(c, p, 1) ~= nil
 	addNote(
 		elements.list,
 		0,
@@ -486,14 +484,14 @@ local function build(): Elements
 		TextWrapped = true,
 		TextColor3 = Theme.text,
 		Position = UDim2.fromScale(0, 0.07),
-		Size = UDim2.fromScale(1, 0.09),
+		Size = UDim2.fromScale(1, 0.12),
 		Parent = panel.body,
 	})
 	Ui.textLimit(17, 9).Parent = rule
 	local list = Ui.scrollList({
 		Name = "Odds",
-		Position = UDim2.fromScale(0, 0.17),
-		Size = UDim2.fromScale(1, 0.56),
+		Position = UDim2.fromScale(0, 0.2),
+		Size = UDim2.fromScale(1, 0.53),
 		Parent = panel.body,
 	}, 4)
 	local status = Ui.label({

@@ -27,6 +27,9 @@ export type PromptContext = {
 	paidRandomAllowed: boolean, -- ComplianceService, fail closed (4d)
 	inventoryCap: number, -- EconomyConfig.INVENTORY_CAP (60)
 	boostCapSec: number, -- EconomyConfig.BOOST_CAP_SEC (2 h)
+	-- Live Hype Snack seconds left: MultiplierService.getBoostSec(player, "Hype"), read by MonetizationService at
+	-- call time (architecture 1a, CR-G4). nil = MultiplierService not reachable: falls back to data.boosts.hypeSec.
+	hypeSecLeft: number?,
 }
 
 local PurchaseRules = {}
@@ -113,8 +116,10 @@ function PurchaseRules.canPrompt(data: ProfileData, key: string, ctx: PromptCont
 		end
 	end
 	if entry.grantKind == "Boost" and entry.hypeSec then
-		-- GDD 8h: refuse when the 2 h cap would be passed, so no paid time is wasted.
-		if finiteOr(data.boosts.hypeSec, 0) + entry.hypeSec > ctx.boostCapSec then
+		-- GDD 8h: refuse when the 2 h cap would be passed, so no paid time is wasted. Uses the live seconds left
+		-- (CR-G4): `data.boosts.hypeSec` lags while Hype runs.
+		local hypeSec = finiteOr(ctx.hypeSecLeft, finiteOr(data.boosts.hypeSec, 0))
+		if hypeSec + entry.hypeSec > ctx.boostCapSec then
 			return false, "BoostCap"
 		end
 	end

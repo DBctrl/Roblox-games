@@ -61,6 +61,9 @@ local CUSTOM_EVENTS: { [string]: boolean } = {
 	DuelDraw = true,
 	DuelForfeit = true,
 	SessionLength = true,
+	-- Sprint 3 (CR-G6, D-069): MonetizationService only, after the receipt's grant is saved. Value = R$ price.
+	LadderFallback = true,
+	RestrictedEggGrant = true,
 }
 
 -- CoinReason -> AnalyticsEconomyTransactionType name. Never a Robux source (GDD 8g).

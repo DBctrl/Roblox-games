@@ -19,18 +19,20 @@
 --
 -- RequestPurchase (2 #13) is a prompt gate only: rate limit (RateLimit.connect), string of <= 24 chars,
 -- ProductCatalog.canSell, FirstWin, next ladder tier only, permanent items not owned, Starter Pack once, Robux eggs
--- need PaidRandomAllowed, pets need free inventory slots, Hype Snack refused past the 2 h cap, one open prompt at a
--- time. Then the SERVER calls PromptProductPurchase. There are no purchase touch pads (GDD 8b): nothing else in the
--- game opens a prompt, and no Touched or ProximityPrompt handler reaches this file.
+-- need PaidRandomAllowed, pets need free inventory slots, Hype Snack refused past the 2 h cap (live seconds from
+-- MultiplierService.getBoostSec, CR-G4), one open prompt at a time. Then the SERVER calls PromptProductPurchase.
+-- There are no purchase touch pads (GDD 8b): nothing else in the game opens a prompt, and no Touched or ProximityPrompt handler reaches this file.
 --
 -- Grant registry (4e): Gameplay services call `registerGrant(kind, fn)` in their Start(). This service registers
 -- Entitlement and Donation itself. Attributes PaidTier, Vip, AutoClickerOwned, StarterPackOwned are written here
 -- on load and after every grant; `EntitlementsChanged` fires after every grant.
+-- Test seams for qa (QA-F9, D-069): `processReceipt`, `grantEntry`, `getGrant`. Game code never calls them.
 -- Logs never contain names, user ids or other personal info.
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 
 local ComplianceService = require(script.Parent.ComplianceService)
 local DataService = require(script.Parent.DataService)
@@ -109,6 +111,82 @@ local function confirmSaved(player: Player, purchaseId: string): boolean
 	end, SAVE_CONFIRM_SEC)
 end
 
+-- 3c steps 2, 4, 5 for one catalog entry: dedupe, the grant in one update, then wait for the save that holds it.
+local function grantEntryInner(
+	player: Player,
+	entry: ProductCatalog.Entry,
+	purchaseId: string
+): Enum.ProductPurchaseDecision
+	local data = DataService.getData(player)
+	if data == nil or not DataService.isLoaded(player) then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	-- Already granted earlier (this session or a previous one): never grant again, just make sure it is saved.
+	if PurchaseRules.savedHasReceipt(data :: any, purchaseId) then
+		return if confirmSaved(player, purchaseId)
+			then Enum.ProductPurchaseDecision.PurchaseGranted
+			else Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	local grant = grants[entry.grantKind]
+	if grant == nil then
+		warn(
+			`MonetizationService: no grant registered for {entry.grantKind} ({entry.key}); not processed yet`
+		)
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	local applied, reason = false, "NotRun"
+	local tierBefore, tierAfter = 0, 0
+	local updated = DataService.update(player, function(live)
+		tierBefore = tonumber(live.entitlements.paidTier) or 0
+		applied, reason = PurchaseRules.applyGrant(live, player, entry, purchaseId, grant)
+		tierAfter = tonumber(live.entitlements.paidTier) or 0
+	end)
+	if reason == "Duplicate" then
+		-- Raced with another grant of the same id between the check above and the update: already applied.
+		return if confirmSaved(player, purchaseId)
+			then Enum.ProductPurchaseDecision.PurchaseGranted
+			else Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	if not updated or not applied then
+		warn(`MonetizationService: grant for {entry.key} not applied ({reason}); not processed yet`)
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	writeAttributes(player)
+	entitlementsChangedEvent:Fire(player)
+	-- Section 5 (CR-G6): which special grant this was. Logged only after the save below holds it.
+	local ladderFallback = entry.grantKind == "PaidTier" and not (tierAfter > tierBefore)
+	local restrictedEgg = entry.grantKind == "RobuxEgg" and not ComplianceService.paidRandomAllowed(player)
+
+	if not confirmSaved(player, purchaseId) then
+		warn(
+			`MonetizationService: save for {entry.key} not confirmed; not processed yet (retry will not regrant)`
+		)
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	TelemetryService.custom(player, "Purchase", entry.priceRobux)
+	if ladderFallback then
+		TelemetryService.custom(player, "LadderFallback", entry.priceRobux) -- D-019 #3: granted as Hype Snack time
+	end
+	if restrictedEgg then
+		TelemetryService.custom(player, "RestrictedEggGrant", entry.priceRobux) -- 4d: granted as the fixed pet
+	end
+	notify(player, "Success", `Thanks! {entry.displayName} is yours.`)
+	local effect = effectRemote
+	if effect then
+		effect:FireClient(
+			player,
+			"Purchase",
+			{ userId = player.UserId, productKey = entry.key } :: Types.EffectPayload
+		)
+	end
+	return Enum.ProductPurchaseDecision.PurchaseGranted
+end
+
 local function processReceiptInner(info: { [string]: any }): Enum.ProductPurchaseDecision
 	local playerId, productId, rawPurchaseId = info.PlayerId, info.ProductId, info.PurchaseId
 	if type(playerId) ~= "number" or type(productId) ~= "number" or rawPurchaseId == nil then
@@ -138,53 +216,26 @@ local function processReceiptInner(info: { [string]: any }): Enum.ProductPurchas
 		warn(`MonetizationService: receipt for unknown product id {productId}; not processed`)
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
-	local grant = grants[entry.grantKind]
-	if grant == nil then
-		warn(
-			`MonetizationService: no grant registered for {entry.grantKind} ({entry.key}); not processed yet`
-		)
+	return grantEntryInner(player, entry, purchaseId)
+end
+
+-- Runs `fn` with the PurchaseId marked in flight (one run per id per server) and every error caught.
+local function runGuarded(
+	purchaseId: string,
+	fn: (...any) -> Enum.ProductPurchaseDecision,
+	...: any
+): Enum.ProductPurchaseDecision
+	if inFlight[purchaseId] then
+		return Enum.ProductPurchaseDecision.NotProcessedYet -- the running call finishes it; Roblox retries
+	end
+	inFlight[purchaseId] = true
+	local ok, result = pcall(fn, ...)
+	inFlight[purchaseId] = nil
+	if not ok then
+		warn(`MonetizationService: ProcessReceipt error: {result}`)
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
-
-	local applied, reason = false, "NotRun"
-	local updated = DataService.update(player, function(live)
-		applied, reason = PurchaseRules.applyGrant(live, player, entry, purchaseId, grant)
-	end)
-	if reason == "Duplicate" then
-		-- Raced with another grant of the same id between the check above and the update: already applied.
-		return if confirmSaved(player, purchaseId)
-			then Enum.ProductPurchaseDecision.PurchaseGranted
-			else Enum.ProductPurchaseDecision.NotProcessedYet
-	end
-	if not updated or not applied then
-		warn(`MonetizationService: grant for {entry.key} not applied ({reason}); not processed yet`)
-		return Enum.ProductPurchaseDecision.NotProcessedYet
-	end
-
-	writeAttributes(player)
-	entitlementsChangedEvent:Fire(player)
-	if entry.grantKind == "RobuxEgg" and not ComplianceService.paidRandomAllowed(player) then
-		print(`MonetizationService: restricted-account receipt for {entry.key} granted as the fixed pet`)
-	end
-
-	if not confirmSaved(player, purchaseId) then
-		warn(
-			`MonetizationService: save for {entry.key} not confirmed; not processed yet (retry will not regrant)`
-		)
-		return Enum.ProductPurchaseDecision.NotProcessedYet
-	end
-
-	TelemetryService.custom(player, "Purchase", entry.priceRobux)
-	notify(player, "Success", `Thanks! {entry.displayName} is yours.`)
-	local effect = effectRemote
-	if effect then
-		effect:FireClient(
-			player,
-			"Purchase",
-			{ userId = player.UserId, productKey = entry.key } :: Types.EffectPayload
-		)
-	end
-	return Enum.ProductPurchaseDecision.PurchaseGranted
+	return result
 end
 
 local function processReceipt(info: { [string]: any }): Enum.ProductPurchaseDecision
@@ -195,20 +246,34 @@ local function processReceipt(info: { [string]: any }): Enum.ProductPurchaseDeci
 		warn("MonetizationService: receipt without PurchaseId")
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
-	if inFlight[purchaseId] then
-		return Enum.ProductPurchaseDecision.NotProcessedYet -- the running call finishes it; Roblox retries
-	end
-	inFlight[purchaseId] = true
-	local ok, result = pcall(processReceiptInner, info)
-	inFlight[purchaseId] = nil
-	if not ok then
-		warn(`MonetizationService: ProcessReceipt error: {result}`)
-		return Enum.ProductPurchaseDecision.NotProcessedYet
-	end
-	return result
+	return runGuarded(purchaseId, processReceiptInner, info)
 end
 
 -- RequestPurchase ----------------------------------------------------------------------------------------
+
+-- Live Hype Snack seconds left from MultiplierService.getBoostSec (architecture 1a, CR-G4). Call-time lookup of the
+-- Gameplay module (never at file top, never in Init): the only Data -> Gameplay read. Read-only and yield-free.
+-- nil when MultiplierService or getBoostSec is not there, or the call fails: PurchaseRules then uses the profile.
+local function liveHypeSec(player: Player): number?
+	local server = ServerScriptService:FindFirstChild("Server")
+	local gameplay = server and server:FindFirstChild("Gameplay")
+	local module = gameplay and gameplay:FindFirstChild("MultiplierService")
+	if module == nil or not module:IsA("ModuleScript") then
+		return nil
+	end
+	local ok, sec = pcall(function()
+		local multiplier = (require :: any)(module)
+		local getBoostSec = multiplier and multiplier.getBoostSec
+		if type(getBoostSec) ~= "function" then
+			return nil
+		end
+		return getBoostSec(player, "Hype")
+	end)
+	if not ok or type(sec) ~= "number" then
+		return nil
+	end
+	return sec
+end
 
 local function onRequestPurchase(player: Player, key: any)
 	if typeof(key) ~= "string" or #key > PurchaseRules.KEY_MAX_LEN then
@@ -232,6 +297,7 @@ local function onRequestPurchase(player: Player, key: any)
 		paidRandomAllowed = ComplianceService.paidRandomAllowed(player),
 		inventoryCap = EconomyConfig.INVENTORY_CAP,
 		boostCapSec = EconomyConfig.BOOST_CAP_SEC,
+		hypeSecLeft = liveHypeSec(player),
 	})
 	if not ok then
 		local text = REFUSAL_TEXT[reason or ""]
@@ -285,6 +351,32 @@ end
 function MonetizationService.owns(player: Player, key: Types.ProductKey): boolean
 	local data = DataService.getData(player)
 	return data ~= nil and PurchaseRules.owns(data, key)
+end
+
+-- Test seams (QA-F9, D-069; architecture 1b). For qa only: game code never calls these.
+
+-- The exact function assigned to MarketplaceService.ProcessReceipt. Yields.
+MonetizationService.processReceipt = processReceipt
+
+-- 3c steps 2, 4 and 5 for a catalog entry, so tests can run a grant while product ids are still 0. Same in-flight
+-- guard and error handling as ProcessReceipt. Yields.
+function MonetizationService.grantEntry(
+	player: Player,
+	entry: ProductCatalog.Entry,
+	purchaseId: string
+): Enum.ProductPurchaseDecision
+	if typeof(player) ~= "Instance" or not player:IsA("Player") or type(entry) ~= "table" then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	if type(purchaseId) ~= "string" or purchaseId == "" then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	return runGuarded(purchaseId, grantEntryInner, player, entry, purchaseId)
+end
+
+-- Read-only view of the grant registry: the fn registered for a GrantKind, or nil.
+function MonetizationService.getGrant(kind: Types.GrantKind): GrantFn?
+	return grants[kind]
 end
 
 -- Lifecycle ------------------------------------------------------------------------------------------
