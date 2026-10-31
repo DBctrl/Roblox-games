@@ -15,7 +15,7 @@
 --   from the server's HypeEndsAt attribute, updated once per second.
 -- * The Roblox player list starts collapsed; the "Players" button toggles it.
 -- * T-034: "Pods" button (ShopController pod shop), "Settings" button (SettingsController), a pod income line
---   from IdleMpPerSec, and a rebirth button that pulses "REBIRTH READY" when Coins >= RebirthCost; it opens
+--   from IdleMpPerSec, a "Daily" button (T-055, RewardsController), and a rebirth button that pulses "REBIRTH READY" when Coins >= RebirthCost; it opens
 --   Panels/RebirthPanel (confirm screen, the only RequestRebirth sender).
 -- * Updates are event-driven (attribute changes, max 5 Hz from the server) plus one 2 Hz check for the arrow.
 
@@ -276,6 +276,7 @@ local function build(): Elements
 	panelButton("PodsButton", "Pods", 2, Theme.good, "Pods")
 	panelButton("PetsButton", "Pets", 3, Theme.panelLight, "Pets") -- T-036 (PetsController)
 	panelButton("RobuxShopButton", "Shop", 4, Theme.accent, "RobuxShop") -- T-057 (Panels/RobuxShopPanel)
+	panelButton("DailyButton", "Daily", 5, Theme.panelLight, "Daily") -- T-055 (RewardsController)
 
 	-- Top-left: rebirth button (after FirstWin). "REBIRTH READY" pulses when coins reach the cost (GDD 4.5).
 	local rebirthButton = Ui.button({
