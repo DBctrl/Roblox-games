@@ -6,6 +6,10 @@
 -- T-038: rank looks and fits. Clones cartoon Accessory templates from ServerStorage.Assets.Looks
 -- (names in Shared.World.MapLayout) onto the avatar, at most 6, never edits the body, and wears
 -- nothing when the player turns the ShowOwnLook setting off. Nil-safe: missing art = no accessory.
+-- T-059: duel movement lock. ZoneService holds the "DuelRing" lock from teleportToRing until the
+-- ring is released (or a duelist leaves); DuelService may add its own "Duel" lock. Locks are
+-- reason-keyed, survive respawn, and a new lock stops walking momentum at once. WalkSpeed 0 alone
+-- can be bypassed by an exploiting client, so ZoneService also leashes ring occupants on the server.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -82,6 +86,18 @@ local function apply(player: Player)
 		humanoid.WalkSpeed = BASE_WALK_SPEED * state.speedMult
 		humanoid.JumpPower = BASE_JUMP_POWER
 	end
+end
+
+-- On a new lock: drop the walking momentum (horizontal velocity) so the player stops at once
+-- instead of sliding. Gravity and later physics (the duel knockback) are left alone.
+local function stopWalking(player: Player)
+	local humanoid = humanoidOf(player)
+	local root = humanoid and humanoid.RootPart
+	if root == nil then
+		return
+	end
+	local v = root.AssemblyLinearVelocity
+	root.AssemblyLinearVelocity = Vector3.new(0, math.min(v.Y, 0), 0)
 end
 
 -- Looks and fits ----------------------------------------------------------------------------------
@@ -337,6 +353,9 @@ function CharacterService.setMovementLocked(player: Player, reason: string, lock
 	state.locks[reason] = if locked then true else nil
 	if wasLocked ~= isLocked(state) then
 		apply(player)
+		if not wasLocked then
+			stopWalking(player)
+		end
 	end
 end
 
