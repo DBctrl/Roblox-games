@@ -3,111 +3,149 @@ _Owned by lawyer._
 
 > This is not legal advice. It is an automated compliance checklist. Consult a qualified lawyer for anything flagged NEEDS-LAWYER.
 
-## GDD review: Candy Factory Tycoon (docs/gdd.md, D-007), 2026-10-31
+## Rev 1 re-check: "Aura Up!" GDD rev 1 (D-018), 2026-10-31
 
 > This is not legal advice. It is an automated compliance checklist. Consult a qualified lawyer for anything flagged NEEDS-LAWYER.
 
-**Sources and verification.** Policies are cited by name from the reviewer's knowledge: Roblox Terms of Use,
-Roblox Community Standards, Roblox Paid Random Items policy, Experience Guidelines / Content Maturity Labels
-questionnaire, Developer Exchange (DevEx) Terms, Roblox Advertising Standards. **The current text of these
-pages was not fetched live in this review**, so every point below should be re-checked against the live
-pages at `/launch`. No marketing docs, assets or analytics fields exist yet (docs/marketing/ empty,
-asset log and architecture.md empty), so items 4, 5 and 7 cover the GDD only.
+**Scope:** only the GDD sections marked "(rev 1)" (1, Title, 4.1, 4.3, 4.5, 4.6, 4.7, 5, 8, 10, 11, 12, 13, 14, 15), checked against the v1 review below (D-016) and D-018. Unchanged sections were not re-reviewed. Paid-random-items text re-read this session [V raw creator-docs]: the policy covers random items bought "directly or indirectly with Robux", including "random items purchased with paid in-game currency". It does not mention earn-rate boosts or items that speed up earning. Random rewards for "an action that does not involve the payment of Robux" are free random items.
 
-### NEEDS-LAWYER
-- None. Nothing in the GDD needs a qualified lawyer at this stage.
+### NEEDS-LAWYER (unchanged)
+NL-1 (title clearance, AURAUP Class 5 application) and NL-2 (owner's personal loot-box exposure outside PolicyService regions, now limited to the Star and Galaxy eggs) still stand. Nothing new.
 
-### Summary
-| # | Item | Status |
+### Rev 1 summary
+**No BLOCKER remains, as long as the owner approves option A.** If the owner picks option B, B-1 reopens and the option B fix in the v1 table applies.
+
+| # | Item | Label | Ruling and reason |
+|---|---|---|---|
+| RC-1 | **B-1 under option A** (GDD 4.1, 4.3, 4.5, 4.6, 8 rules g and "Removed", 10) | **OK: RESOLVED on paper, with conditions** | I traced every paid path. Coin packs, paid Coin Snack, Starter Pack coins and Selfie Booth, VIP daily coins x2, pod early unlocks, Skip Rebirth, Skip to World 2 and Auto-Mog Early are all gone. The 23 remaining products grant only MP power (ladder, VIP x1.25, Hype Snack, Auto Clicker, fixed pets, Robux-egg pets), walk speed, cosmetics, a pet slot or tips. None grants coins, multiplies coins, waives a coin cost, grants a coin-shop item, rebirth or portal, or grants an egg hatch. Every term in the coins formula (BossCoins, Rebirths, the free-only Coin Snack) is unbuyable. The fixed pets (Sparkle Pup, Ring Light Retriever, Neon Pup) are not coin-egg pets. The restricted-player fallback pets come from Robux eggs, not coin eggs. VIP's daily extra is MP only. Coin eggs, the D4 free hatch and the Update 2 Beach Egg are therefore **free random items**. Showing odds is optional for them; the GDD shows odds anyway, which is fine. **Conditions:** (a) the owner approves A at gate 5; (b) under A, integration-programmer removes D-017's default coin-egg policy gate and cuts the receipt registry to 23 products (D-018 note); (c) qa's 8g firewall test covers **every** grant path, including the ladder fallback, the restricted-player fallback, the Starter Pack, VIP join and daily-claim grants, and code and event grants that a product could ever extend; (d) the rule in 8g and 13 is permanent: any future product that touches coins, even a "x2 coins" boost, sends the game back to option B. |
+| RC-2 | **R-5: paid MP reaches richer bosses (and bigger duel coin rewards, faster Auto-Mog income, earlier rebirths and World 2) sooner** | **OK, residual RISK (low)** | **Ruling: this does not make coin eggs paid random items.** Coins under A are never bought with Robux, directly or as "paid in-game currency". They are earned only by play at fixed per-boss rates. Paid MP changes how fast a player can earn, not what Robux buys. The policy's "indirectly" covers currency bought with Robux [V], and it treats gameplay-earned rewards as unpaid [V]. Reading "anything that speeds up earning" as indirect purchase would make every paid boost in every game a loot-box trigger, and the text does not say that. **Why it stays a low RISK:** the DevForum post "Clarifying Requirements for Paid Random Items" [S] was not opened this session, and Roblox could clarify the term later. **Conditions:** (a) the owner or team-lead reads that DevForum post and the live paid-random-items page in a browser before `/launch`, and moves to option B if either says earn-rate boosts count; (b) no product may give a coin-specific edge, such as a paid "best boss" teleport, a paid fight-speed boost or more Auto-Mog fights per second; (c) never market a paid tier as "more coins" or "faster eggs". |
+| RC-3 | Ladder fallback grant (8e): "a receipt for an owned or lower tier grants the **next unowned tier**" | **RISK (monetization, escalate)** | Players aren't misled, because they get more than they paid for. But clients can call `PromptProductPurchase` on any product id themselves, so an exploiter could buy the x2 product (4 R$) again and again and climb to x32 for 20 R$ in total (5 x 4 R$), instead of 148 R$ for the full ladder. **Fix (owner gate 5):** every receipt that is not for the next tier grants Hype Snack time at the stated rate (10 min per 2 R$ paid) and logs the event. Keep "next tier only" in the shop UI. |
+| RC-4 | Restricted-player fallback text (5) | **RISK (minor wording)** | The text shown on the stand names only Starlight Corgi. **Fix:** the Galaxy stand names Nebula Fox, and the 3-pack text says "you get 3 Starlight Corgi / 3 Nebula Fox (no random roll)". The fallback is otherwise correct: never a roll, never nothing, pity unchanged, logged. |
+| RC-5 | Robux egg odds placement, 3-pack text, pity rule wording, true odds at 9/10, saved per-egg counter (5, 8f) | OK | Matches 2.1 and 2.2 fixes (a)-(d). The per-hatch odds list for a 3-pack that crosses pity is correct. The Week 4 egg is covered (13). |
+| RC-6 | PolicyService flow (5, 12) | OK | Matches 2.4: server-side, pcall, retry, cache, fails closed, attribute for UI only, no hard-coded countries. |
+| RC-7 | Bundles (5, 8 "Not sold") | OK | No egg hatch in any pack, VIP or future pack (2.6). |
+| RC-8 | Ladder listing (8e, 8 table) | OK | "x2 Mog Points" naming, "Does not stack" line, next-tier-only shop (2.12). Apply RC-3 to the fallback. |
+| RC-9 | Timed boosts (8h, 8 table) | OK | Time left and the 2 h cap are shown, purchase is blocked at the cap, and time counts only in game (2.14). Note: the Starter Pack's 30 min and VIP's daily +10 min are grants, not purchases. If a grant would pass the cap, add the time anyway (as the x32 fallback does) and never drop it silently. |
+| RC-10 | Wording: "Exclusive", tips text (8i) | OK | Matches 2.16 and 2.17. The Beach Egg is called "limited" but shows a real end date, which is allowed (13). |
+| RC-11 | "Not sold: anything that affects duels" (8) | **RISK (low, marketing wording)** | Rank comes from lifetime MP, and paid MP speeds it up, so paying can buy up to the +6% rank edge in duels (section 6, RankEff cap). That is small and capped, but the absolute claim is not quite true. **Fix:** in marketing and in-game copy, say "Pets, multipliers, VIP and boosts don't count in duels", not "money can't affect PvP". |
+| RC-12 | Codes, group Crew Cap, analytics (10) | OK | Milestone wording rule (2.9), exact group button text, IsInGroup check and no like/favorite pairing (2.8; the pre-launch Community Standards read is still owed), UserId-only analytics with no free text (5.3). Codes and event coin boosts are free, so they don't break the firewall. |
+| RC-13 | Content and maturity (1, 11) | OK | Minimal-or-Mild wording, truthful questionnaire with paid random items: yes, style-only boss jokes, no fart or burp humour, no "looksmax" wording, Aura Farmer likeness rule (3.1-3.5). |
+| RC-14 | Title (Title, 14 R-4) | OK (NL-1 stands) | "Glow-Up Bosses" dropped; "Main Character Clicker" fallback (4.1-4.3). |
+| RC-15 | Kids/Select (14 R-1, 15 Q9) | RISK (high, distribution), already escalated | Correctly carried into the GDD. The fee is still a gate 3 decision. |
+| RC-16 | Live-ops rules (13) | OK | Free event coin boosts, coin eggs stay free, and new Robux eggs follow the full rule set plus a questionnaire re-check. |
+| RC-17 | Option B text (15) | OK | It matches the v1 B-1 fix, including the 2.13 coin-amount rule. |
+
+---
+
+## GDD review: "Aura Up!" v1 (docs/gdd.md, D-015), 2026-10-31
+
+> This is not legal advice. It is an automated compliance checklist. Consult a qualified lawyer for anything flagged NEEDS-LAWYER.
+
+This review replaces the Candy Factory Tycoon review (D-007/D-008, superseded by D-011). D-008 ruling (1) on the group bonus is re-checked in 2.8. Rulings (2) (do not sell owned tiers) and (3) (donor board shows names only, with opt-out) still apply and are kept below.
+
+**Inputs read:** docs/gdd.md (v1), docs/marketing/brief.md section 5, docs/decisions.md D-011..D-015, docs/marketing/competitors.md (positioning and flag notes). Not reviewed yet, because they don't exist: architecture.md data fields, asset-log.md, and ad creatives.
+
+**How sources were checked.** The session can't reach `create.roblox.com`, `devforum.roblox.com`, `en.help.roblox.com` or `about.roblox.com` (DNS blocked). Each source below is marked with how it was checked:
+- **[V]** Verified. Read from Roblox's official creator-docs source repo on GitHub (`github.com/Roblox/creator-docs`), which is the source of create.roblox.com/docs.
+- **[S]** Search snippet only. Official URL, but the page was not opened.
+- **[U]** Unverified. Community sources or reviewer knowledge only.
+
+Re-check every [S] and [U] item in a browser before `/launch`. The allow-list should include the four Roblox hosts above.
+
+---
+
+## NEEDS-LAWYER (top)
+| # | Item | Why |
 |---|---|---|
-| 1 | Terms of Use / Community Standards | RISK (group-join bonus) |
-| 2 | Monetization | RISK (lower-tier pass purchases, Top Donors amounts) |
-| 3 | Maturity label | PASS (likely Minimal) |
-| 4 | IP / trademark | PASS (low risk, generic name) |
-| 5 | Privacy | RISK (public R$ spend of minors on Top Donors) |
-| 6 | DevEx | PASS (notes only) |
-| 7 | Advertising | PASS (nothing to review yet) |
+| NL-1 | **Trademark clearance for the final title** (see 4.1) | An automated search can't clear a mark. A US application for **AURAUP** is pending (serial 99766411, Aura Up LLC, filed 2026-04-15, Class 5, not games) [U, markinton.com]. Get a real clearance search before any ad spend or merch. |
+| NL-2 | **Loot boxes sold to a 9-14 audience, outside Roblox's own rules** (see 2.1) | Following Roblox's paid-random-items rules covers us on the platform. Whether the owner has any personal exposure under national loot-box or consumer law, for regions where PolicyService doesn't restrict, is a legal question. That matters most if the owner earns DevEx income. |
 
-No BLOCKERs. All RISK items have a recommended safe option below; monetization risks escalate to the owner.
+## BLOCKERS (must fix before build or launch)
+| # | Blocker | Fix |
+|---|---|---|
+| B-1 | **(Rev 1: RESOLVED under option A if the owner approves A; see RC-1. Reopens under option B.)** **Coin eggs become paid random items, because coins can be bought with Robux.** Section 8 sells coins directly (Coin Pouch/Bag/Vault, 3,000 coins in the Starter Pack) and indirectly (Coin Snack x2 coins, VIP "daily reward coins x2"). Roblox's policy covers random items bought "indirectly via in-game currencies purchased with Robux" [V]. So Basic, Shiny, Neon and Runway eggs (and the Update 2 Beach Egg) are paid random items. The GDD hides only the Robux eggs for restricted players, so every coin egg would be non-compliant for UK, Australian and Brazilian minors and other restricted users. It also breaks the core loop for them if we simply hide the eggs. | **Owner picks one (monetization gate):** **(A) Recommended:** stop selling coins. Remove Coin Pouch/Bag/Vault, take the coins out of the Starter Pack, replace Coin Snack with an MP-only product or drop it, and change VIP "daily coins x2" to something else (for example a cosmetic, or MP). Coin eggs then become free random items: odds still shown, no restriction needed. **(B)** Keep coin sales and treat every coin egg as a paid random item. Hide or block it when `ArePaidRandomItemsRestricted` is true, and give restricted players a compliant alternative so the loop still works, such as a coin Pet Shop selling specific pets at an expected-value price, or a disclosed fixed hatch order. Both are allowed treatments [V]. B adds about a day of work plus qa. Answers the GDD's open question in 5 ("lawyer to rule whether coin eggs must also hide"): **yes, unless option A is taken.** |
 
-### 1. Terms of Use and Community Standards: RISK
-- Content: cartoon candy factory, no violence, no blood, no gambling theme, no romance. PASS.
-- Social: no custom text input, no chat-dependent mechanics, no off-platform links, no trading. Plot
-  griefing prevented (only the owner presses pads). PASS.
-- **Group-join bonus (+10% earnings for group members): RISK.** Roblox rules (Community Standards on
-  misusing Roblox systems / artificially inflating engagement, and the developer rules on incentivized
-  engagement) forbid giving in-experience rewards for likes, favourites, ratings or follows. Whether a
-  *gameplay* reward for joining a group is still allowed is not clear to me from memory, and the
-  current text could not be verified. Many live games do it, but that is not evidence it is allowed.
-  **Safe option (ruled in D-008):** no gameplay reward for joining the group in v1. Allowed: a plain,
-  optional "Join our group for update news" button with no reward. If the owner wants a group perk
-  later, re-verify the live policy first and prefer a cosmetic-only perk (for example a name-sign tint).
-- GDD already bans rewards for likes/favourites/ratings. PASS; keep it that way (no "like for a code" either
-  when the codes system arrives in Update 1).
+---
 
-### 2. Monetization: RISK
-- **Paid random items:** none (no crates, eggs, paid luck). Paid Random Items policy not triggered. PASS.
-- **Premium currency / Robux value:** none; nothing implies Robux can be won or exchanged for real value. PASS.
-- **Pay to avoid punishment:** no punishment exists (no death, no loss, no AFK kick). PASS.
-- **Progression without paying:** free player reaches Rebirth 10 in ~9-10 h; every system is reachable
-  free. Passes speed up, they never gate. Roblox does not prohibit "pay to win" as such. PASS.
-- **Multiplier ladder pricing (4/8/16/32 R$):** prices are deterministic and shown by Roblox's purchase
-  prompt. Fine in principle. Check at setup that 4 R$ is at or above the current game-pass minimum price
-  (could not verify the current minimum). PASS with that check.
-- **"Highest tier applies" + "buying any tier is allowed": RISK.** A player who owns x8 could buy x2 or x4
-  and get nothing. Selling something that has no effect for that buyer is misleading (Terms of Use /
-  Experience Guidelines on deceptive or misleading purchases). **Required fix:** the shop hides or
-  disables purchase buttons for every tier at or below the player's highest owned tier, and each pass
-  description says: "Your earnings become xN. Does not stack with other Candy passes; the highest one
-  you own applies." The in-game shop says the same next to every tier.
-- **Framing:** never call the ladder "pay to win", "beat everyone" or similar in UI or ads; use neutral
-  wording ("earn Cash faster"). No fake urgency: no countdown timers, "limited time" or fake discounts
-  on the ladder (manipulative-design concerns, target audience 9-14).
-- **Donations (5 to 1,000 R$):** description is honest ("support the developer, no in-game advantage")
-  and the cosmetic rewards are listed. PASS, with conditions: (a) never imply money goes to charity or
-  a cause; (b) each product description lists exactly its reward, including "for this session" on the
-  Huge sparkle; (c) rewards must be delivered exactly as described, nothing extra promised (e.g. no
-  "secret perks" teasers).
-- **Top Donors board: RISK.** A public ranking of R$ spent can pressure a 9-14 audience into competitive
-  spending. **Recommended safe option:** show names and rank only, never Robux amounts, and let players
-  opt out (see item 5). Owner decision (monetization change -> human gate).
-- **Leaderboard dominance by pass owners (GDD Q3):** not a policy issue; product decision only.
+## 1. Terms of Use and Community Standards
+| # | Item | Status | Reason and source |
+|---|---|---|---|
+| 1.1 | Gambling | OK | Eggs pay out only in-game pets, with no cash-out and no trading. Roblox bans *playable* gambling; paid random items are a separate regime (section 2) [V content-maturity]. |
+| 1.2 | Off-platform links | OK | No Discord links in v1 (GDD 12). Codes are posted in the game description and group only. Don't put "codes on our Discord/X" text inside the game. `AllowedExternalLinkReferences` is a legacy field and always returns empty [V PolicyService], so link handling can't rely on it. Use Roblox's own Social Links feature if links are ever wanted [U]. |
+| 1.3 | Social features | OK | Default Roblox chat only. No custom text input is shown to other players. Code entry is private and never displayed. Not a "social hangout" (those are 16+) [V content-maturity]. |
+| 1.4 | Integrity / misleading engagement | RISK | Community Standards "Integrity" bans "misleading content or metadata used to drive engagement" [S about.roblox.com/community-standards]. Title, description and thumbnails must match the real game. No fake update tags, and don't use competitor names as keywords (see 4.3). |
+| 1.5 | PvP duel tone | OK | Opt-in, off by default until the tutorial ends, 10 s auto-decline, cooldowns, a per-session block list, a spam auto-mute, and no loss or insults ("Out-glowed! Rematch?"). Good anti-harassment design. Suggestion only: keep the block list for the session at least, and ideally save it. |
 
-### 3. Maturity and content label: PASS
-Likely questionnaire answers: violence none; blood none; crude humor none; fear none; romance none;
-alcohol/drugs/tobacco none; gambling none (no random items, no betting); strong language none;
-free-form user creation none; social hangout no; paid random items no. **Likely label: Minimal.**
-Action at `/launch`: the owner must complete the Experience Guidelines / maturity questionnaire before
-publishing; unrated experiences have reduced visibility and access (exact current restriction not
-verified). Candy art must not use alcohol-filled sweets (e.g. liqueur chocolates).
+## 2. Monetization
+| # | Item | Status | Reason, fix and source |
+|---|---|---|---|
+| 2.1 | Robux eggs (Star, Galaxy): odds disclosure | OK, with conditions | Policy [V paid-random-items]: show every outcome with numerical percentages **before** purchase, summing to exactly 100%. All 6 eggs sum to 100% (checked). If the list doesn't fit, use a clickable pop-up labeled "Info" or "Details"; a bare (i) icon is not enough. **Conditions:** (a) odds visible on the egg UI and in the purchase confirmation step, never only on a separate page; (b) the 3-pack shows that each of the 3 hatches uses the same odds and that pity can trigger inside the pack; (c) the Week 4 Robux egg follows the same rules. |
+| 2.2 | Pity (10th hatch guaranteed Legendary/Mythic, rolled 90/10) | RISK, design fix | Pity systems count as "probability modifiers": their numeric effect must be explained before purchase, and the displayed odds must **update to show each player's true odds** [V]. **Fix:** (a) when the counter is at 9/10, the egg UI must show the real next-hatch odds (Halo Dragon 90%, Cosmic Unicorn 10%; Rare/Epic 0%) and not the base table; (b) the pity rule is written in words on the egg UI ("Every 10th hatch with no Legendary+ is a guaranteed Legendary (90%) or Mythic (10%)"); (c) the counter is **saved in the profile** per egg, so a pity that silently resets on rejoin would be misleading; (d) the Week 4 egg gets its own counter. |
+| 2.3 | PolicyService region/age restriction | OK, with conditions | Roblox requires `PolicyService:GetPolicyInfoForPlayerAsync` and the `ArePaidRandomItemsRestricted` key for every paid random item [V]. When it is true: hide, replace or block the purchase [V content-maturity]. Restricted groups confirmed so far: UK under 18 (2024), Australia, Brazil under 18 (2026-03-17) and Brazilian adults who aren't age-verified (2026-03-31) [S devforum announcements; S en.help.roblox.com "Brazil Digital ECA Updates"]. A big part of a 9-14 audience will be restricted, and the list can grow, so the code must read the flag and never hard-code countries. The GDD's free-player rule means restricted players stay competitive. |
+| 2.4 | **PolicyService: client or server?** (resolves the GDD `TODO(verify-api)`) | RESOLVED, with a ruling | API reference [V PolicyService.yaml]: security "None", it yields, it must be wrapped in `pcall`, and the only context error is "This method cannot be called on the client for a non-local Player". So **it can be called from the server for any player**, and from the client only for `LocalPlayer`. It errors if more than 100 calls are pending before an HTTP response. **Ruling (rule 8, never trust the client):** call it **on the server** at PlayerAdded inside `pcall`, retry with backoff, and cache it per session. **If it fails, treat the player as restricted.** Replicate the result to the client as a read-only attribute, used only to hide UI. integration-programmer can remove the TODO and cite this. |
+| 2.5 | Restricted player buys a Robux egg anyway | RISK, design fix | Clients can open product prompts themselves, so hidden UI doesn't stop an exploiter or a stale prompt. The server must never grant a *random* result to a restricted player, and must not take Robux and grant nothing. **Fix:** in ProcessReceipt, if the cached flag says restricted, grant a **disclosed non-random outcome** instead, for example the next pet in a fixed order shown on the egg UI. A disclosed non-random order is an allowed treatment [V]. Log the event. |
+| 2.6 | Bundles | OK, keep it that way | A random item inside a paid pack makes the **whole pack** a paid random item [S devforum "Clarifying Requirements for Paid Random Items"]. The Starter Pack has no egg. Never add an egg hatch to the Starter Pack, VIP or any future pack. The free D4 daily egg hatch is free, so no disclosure is needed, but showing odds is fine. |
+| 2.7 | Trading | OK | None in v1. If trading is ever added, it needs a `IsPaidItemTradingAllowed` gate and must never cover outcomes of paid random items for ineligible users [V]. |
+| 2.8 | **Group-join reward** (re-check of D-008) | RISK, allowed cosmetic-only | No official Roblox text banning group-join rewards was found. Community reading is that group perks are widely accepted, while like/favorite rewards are not [U devforum threads 2926286, 233704]. The current Community Standards page could not be opened [S]. **Ruling:** the GDD's cosmetic "Crew Cap" + chat tag with **no stats** is allowed as RISK, under these conditions: (a) check membership on the server with `Player:IsInGroup`; (b) the button says only "Join our group for update news + a free Crew Cap"; (c) **never** bundle it with "like/favorite"; (d) before launch, the owner or team-lead reads the live Community Standards (Integrity and Misusing Roblox Systems) in a browser, and if any rule forbids it, ship the fallback (no reward). D-008's ban on a *gameplay* reward stays. |
+| 2.9 | Milestone codes (1K/10K/50K likes, 1M visits) | RISK, wording rule | The codes are public and given to everyone, not to the player who liked, so no individual is paid for an engagement action. That is the safer pattern. **Wording rule:** say "New codes at like and visit milestones". Never say "Like the game to get a code" or "Like + favorite for rewards", and never claim to detect likes. The GDD already says rewards never require proof of liking or favoriting. [U, no official text found] |
+| 2.10 | No prompt before the first win | OK, implementation note | Good practice. Note that the `FirstWin` gate is a UX gate: clients can call `MarketplaceService:PromptProductPurchase` themselves [U]. **ProcessReceipt must always deliver a valid paid receipt**, even one bought before FirstWin. Never refuse delivery to enforce a design rule. ProcessReceipt checks receipts and confirms the grant [S create.roblox.com developer-products]. |
+| 2.11 | No purchase pads | OK | No pads at all, and ProximityPrompts open the shop UI and never a prompt. This exceeds the brief. |
+| 2.12 | Multiplier ladder "highest tier applies" | RISK, wording and design fix | D-008 (2) still applies: hide or disable owned and lower tiers, and every listing says **"Does not stack: the highest tier you own applies."** Two more points: (a) because these are dev products, a client-forced prompt could sell a lower tier that does nothing. **Only the next tier up is purchasable**, and if a useless tier receipt arrives anyway, grant a fair fallback (for example timed Hype Snacks of similar value) and log it; (b) **the ladder multiplies MP only, not coins** (GDD 4.1). Product names and marketing must say "x2 Mog Points", **never "x2 money/earnings/coins"**, or the listing misleads. The owner's D-002 wording ("x2 earnings") must not be copied into the shop. |
+| 2.13 | Currency packs | **BLOCKER-linked** | See B-1. If option B is chosen, packs are fine apart from the egg issue: amounts scale with progress, so the shop must show the **actual coin amount for this player** before purchase, not just "5 min of income". |
+| 2.14 | Timed snacks (stack to 2 h) | RISK, minor | Show the remaining time and the cap. Block purchase once the cap is reached, so no paid time is wasted. State whether time runs offline. |
+| 2.15 | Skips (Skip Rebirth 39, Skip to World 2 249) | OK | Allowed. The zero-Robux curve is tuned, so no purchase is required to progress. No "pay to avoid punishment": losers lose nothing and there is no paid revenge. |
+| 2.16 | Early unlocks, Auto Clicker, VIP, per-world cosmetics | OK, minor wording | Say what is permanent. Re-grant entitlements on join (GDD 8d). "Limited" cosmetics: if they are not time-limited, call them "Exclusive"; if they are time-limited, show the real end date. No fake scarcity timers, and no "resale value" implication. |
+| 2.17 | Donations (Tip 5-1,000) | OK | The product text must say exactly what the tip gives: "Thank-you banner + donor name-tag colour. No other in-game benefit." Top Donors board shows names and rank only, no amounts, with opt-out (D-008 (3), kept). A 1,000 R$ tip aimed at 9-14 players is legal but is an owner decision under gate 5. |
+| 2.18 | Robux can't be won or traded | OK | Codes, duels and daily rewards give coins, boosts and cosmetics only. Nothing promises Robux or real value. |
 
-### 4. IP / trademark: PASS (low risk)
-- "Candy Factory Tycoon" is descriptive and generic (common words, common Roblox genre suffix). Generic
-  names are weak trademarks and low infringement risk, but also hard to protect and may collide with
-  existing Roblox games of the same name. Recommendation: search Roblox for exact matches before launch;
-  a more distinctive name helps discovery (GDD Q6, marketer's call).
-- Avoid famous candy/entertainment marks in names, models, decals and ads: Candy Crush, Candy Land,
-  Wonka / Willy Wonka / "golden ticket", Sugar Rush (Wreck-It Ralph), Skittles, M&M's, Kit Kat,
-  Hershey's, Jolly Rancher, Haribo gold bear shapes. Dropper names in the GDD are all generic. PASS.
-- Genre study names (Miner's Haven, Retail Tycoon 2, etc.) are mechanics references only; never copy
-  their assets, UI layouts, logos or names. Re-check at `/launch` against asset-log.md.
+## 3. Maturity and content label
+| # | Item | Status | Reason and source |
+|---|---|---|---|
+| 3.1 | Likely label | RISK: Minimal or **Mild** | Minimal = "occasional mild violence"; Mild = "repeated mild violence" [V content-maturity]. Violence with unrealistic consequences is mild-tier [V]. A boss ragdolls into foam on **every win, about every 4 s**, and duel losers are knocked back. An honest answer may be "repeated" unrealistic violence, which gives **Mild**. Both Minimal and Mild reach Roblox Kids (5-8) and Select (9-15) [V], so practical impact is low. **Don't promise "Minimal" in marketing** until Roblox assigns the label. Answer the questionnaire truthfully. Misrepresenting it leads to moderation [V]. |
+| 3.2 | Likely questionnaire answers | RISK | Violence: yes, unrealistic, no blood. Fear: none. Crude humor: none (keep boss gags free of fart/burp jokes, or it becomes Mild). Romance: none. Gambling: no playable gambling. **Paid random items: YES, must be declared** [V]. Paid item trading: no. Social hangout: no. Free-form creation: no. Sensitive issues: no (Roblox's definition is polarized social, political or religious issues [V]; looksmaxxing isn't listed, but see 3.3). Re-take the questionnaire whenever an update changes an answer [V]. |
+| 3.3 | Looksmaxxing / "mog" theme for kids (body image) | RISK, keep the guardrails | competitors.md reports public criticism of looksmaxxing content for kids. The GDD already has strong guardrails (GDD 11: cartoon items only, no body-shape edits, no surgery/steroids/starving/bonesmashing, no insults). **Extra rules:** (a) boss and NPC models must not use body type as the joke: no "fat" or "skinny" losers, no "ugly" face reveal, no jawline, height or weight labels; Sleepy Sid and Bedhead Benny lose to style, not to their bodies (builder brief); (b) **don't use "looksmax"/"looksmaxxing" anywhere**, including description and tags. "Mog" in tags is fine per D-012; (c) rank names "Star Mogger"/"Supreme Mogger" are acceptable slang for "out-shine" but are the weakest names. Consider "Star Icon"/"Supreme Icon" if Roblox Select review pushes back; (d) no real-world "tips", diets or exercise claims anywhere in the game. |
+| 3.4 | Cartoon-only upgrades | OK | Comb, gel, face mask, shades, sneakers, foam dumbbell, mic, crystal, outfits and auras. Matches brief 5. |
+| 3.5 | No real people | OK, one note | Bosses are invented. **"Aura Farmer"** (rank 8) is a 2025 meme phrase tied to a viral video of a real child [U]. The phrase is fine, but **don't recreate that dance, outfit or likeness** in animations, thumbnails or ads. No influencer names anywhere (Clavicular flag, D-012). |
+| 3.6 | **Roblox Kids/Select publishing requirements** (not in the GDD) | **RISK (high, distribution), escalate** | To reach under-16 players, a game must pass an evaluation [V kids-and-select]: the creator account must be age-checked (ID for 18+, facial age estimation for under 18) with 2-Step Verification on; a **one-time refundable per-game fee** (amount not stated in the docs; a 1,000 R$ figure appears in [S devforum "Alternate Publishing Requirements"]) **or** Roblox Plus/Premium held for at least 2 months; and then a **trial phase visible only to age-checked users 16+** until **250 unique plays by highly engaged, age-checked users within 60 days**, plus a safety review. **Effect:** at launch, the 9-14 target audience **can't see the game**. The fee is a Robux spend (gate 3). Marketer and owner must plan launch ads and the first players for a 16+ trial. |
 
-### 5. Privacy: RISK
-- No personal info collected; no text input; leaderboards use UserId and Roblox display names only. PASS.
-- Analytics: none specified yet. Rule for architecture: only UserId-keyed gameplay events, no PII, no
-  free text. Re-check when docs/architecture.md lists analytics fields.
-- If any text input is added later (plot names, codes are fine), filter via TextService before display.
-- **Top Donors board publishes how much Robux a (likely minor) user spent. RISK.** Fix as in item 2:
-  rank without amounts, plus an opt-out setting saved in DataStore. Server-wide thank-you message
-  names the donor; acceptable, but respect the same opt-out.
+## 4. IP and trademark
+| # | Item | Status | Reason and source |
+|---|---|---|---|
+| 4.1 | "Aura Up!" | RISK (low), NEEDS-LAWYER for clearance | No Roblox game named "Aura Up" was found [U web search]. Nearby aura titles exist ("Max Your Aura", "Aura RNG", "Aura Ascension", "Aura Farm Simulator"), but none matches. A pending US **AURAUP** application exists (99766411, Class 5 pharmaceuticals/supplements, Aura Up LLC) [U markinton.com]. That's a different class from games (9/41), so confusion risk is low, but it isn't clear. It isn't confusable with "+1 Mog Evolution": no "+1", no "Evolution", and no "Mog" (D-012). Fine as the title, subject to NL-1. |
+| 4.2 | "Glow-Up Bosses" | RISK (medium), not recommended | e.l.f. Beauty, a major brand, runs a Roblox experience called **"Glow Up!"** (launched 2025-12-18) [U licenseglobal.com, investor.elfbeauty.com]. Same platform, same theme. Name confusion and a brand complaint are likely. The BBC also runs the TV format "Glow Up" [U, reviewer knowledge]. Avoid it. |
+| 4.3 | "Main Character Clicker" | OK (low) | Generic phrase. No clash found [U]. Descriptive titles are weak marks but safe. |
+| 4.4 | Competitor look-alikes | OK, keep the rules | GDD 11 bans copying names, labels, UI, art and the red/green split face. Keep the D-012 title and thumbnail rules. **Never use competitor titles ("+1 Mog Evolution", "Frame Mog") in the description, tags or ad keywords** (Integrity, 1.4). |
+| 4.5 | Assets | Pending | asset-log.md is empty. Every model, sound and font must be our own or free-licensed, and logged (GDD 12). Re-check at `/launch`. |
 
-### 6. DevEx (owner notes, not a decision): PASS
-Eligibility as last known (not verified against current DevEx Terms): owner 13+ (parental consent if a
-minor), verified email, account in good standing with no ToS violations, minimum earned Robux balance
-(historically 30,000 earned R$), a valid DevEx portal account and tax forms. Only Robux earned through
-the game count. Note: at 4-32 R$ prices, reaching the minimum needs high volume.
+## 5. Privacy
+| # | Item | Status | Reason |
+|---|---|---|---|
+| 5.1 | Personal info | OK | No collection. No text input shown to others, no photo or camera features. |
+| 5.2 | Text filtering | OK (N/A today) | No user text is shown to others. If any is added (custom duel taunts, pet names, a donor message), it **must** go through TextService filtering for each recipient. Leaderboards use Roblox names only. |
+| 5.3 | Analytics | OK, condition | The GDD event list (time to first win ... every purchase) has no PII. Key it by UserId only, with no names, chat or free text. Re-check when architecture.md defines the fields. |
+| 5.4 | Public boards | OK | Donor board: names only, opt-out (D-008 (3)). Duel and MP boards show standard Roblox names. |
 
-### 7. Advertising: PASS (nothing to review yet)
-No ad creatives exist. When marketer drafts ads: follow Roblox Advertising Standards (no misleading
-claims, no implied free Robux, no "pay to win" framing, no references to other games/brands, no
-off-platform links, age-appropriate content). Re-run this item at `/launch`.
+## 6. DevEx (notes for the owner, not a decision)
+Status: **RISK / owner check**, [U, DevEx Terms not opened this session]. From reviewer knowledge: DevEx needs the minimum age set in the DevEx Terms, a verified email, an account in good standing, a minimum earned-Robux balance (historically 30,000 earned Robux), acceptance of the DevEx Terms, and tax and payment details. Minors usually need a parent or guardian involved in the payout agreement. Robux spent on the Kids/Select fee and on ads reduces the earned balance. Confirm current numbers on the official DevEx page before relying on them.
+
+## 7. Advertising
+Status: **Pending (no creatives yet)**. Rules to follow when marketer makes them [S en.help.roblox.com Advertising Standards]: no reward mechanisms that push under-13 users to engage with ads (effective 2025-10-29), including Portal Ads; no fake "free Robux" or deceptive rewards; ads must show the real game. Our own rules: don't show Mythic pulls as typical; don't say "Minimal" before the label is assigned; no competitor names; no real people or the viral "aura farming" likeness; no "looksmax" wording. Re-review every creative before spending (gate 3).
+
+---
+
+## Sources
+- Paid random items policy [V]: https://github.com/Roblox/creator-docs/blob/main/content/en-us/production/monetization/paid-random-items.md (live page https://create.roblox.com/docs/production/monetization/paid-random-items)
+- PolicyService API reference [V]: https://github.com/Roblox/creator-docs/blob/main/content/en-us/reference/engine/classes/PolicyService.yaml (live page https://create.roblox.com/docs/reference/engine/classes/PolicyService)
+- Content maturity and compliance [V]: https://github.com/Roblox/creator-docs/blob/main/content/en-us/production/promotion/content-maturity.md
+- Roblox Kids and Select [V]: https://github.com/Roblox/creator-docs/blob/main/content/en-us/production/publishing/kids-and-select.md
+- Clarifying Requirements for Paid Random Items [S]: https://devforum.roblox.com/t/clarifying-requirements-for-paid-random-items/4654622
+- UK under-18 restriction [S]: https://devforum.roblox.com/t/update-on-paid-random-items-restriction-for-uk-users-under-18/3072183
+- Australia restriction [S]: https://devforum.roblox.com/t/update-on-paid-random-items-restriction-for-australian-users/3153602
+- Brazil Digital ECA Updates [S]: https://en.help.roblox.com/hc/en-us/articles/48706630819476-Brazil-Digital-ECA-Updates
+- Alternate Publishing Requirements (fee) [S]: https://devforum.roblox.com/t/alternate-publishing-requirements-for-roblox-kids-and-select/4630944
+- Community Standards [S]: https://about.roblox.com/community-standards
+- Advertising Standards [S]: https://en.help.roblox.com/hc/en-us/articles/13722260778260-Advertising-Standards
+- Developer products [S]: https://create.roblox.com/docs/production/monetization/developer-products
+- Like/favorite and group rewards, community only [U]: https://devforum.roblox.com/t/is-rewarding-players-for-liking-favoriting-a-game-allowed/2926286 , https://devforum.roblox.com/t/rewards-through-likingfavoritinginvites/233704
+- AURAUP trademark application [U]: https://markinton.com/trademark/auraup-99766411
+- e.l.f. "Glow Up!" on Roblox [U]: https://www.licenseglobal.com/beauty-cosmetics/e-l-f-beauty-launches-glow-up-makeup-game-on-roblox , https://investor.elfbeauty.com/stock-and-financial/press-releases/landing-news/2025/12-18-2025-200509188

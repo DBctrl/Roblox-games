@@ -5,7 +5,8 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Remotes = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Contracts"):WaitForChild("Remotes"))
+local Remotes =
+	require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Contracts"):WaitForChild("Remotes"))
 
 type Service = {
 	Init: ((self: any) -> ())?,

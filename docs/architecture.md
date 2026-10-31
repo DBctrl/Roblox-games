@@ -1,298 +1,511 @@
-# Architecture: Candy Factory Tycoon v1
-_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1, 2026-10-31 (D-009).
+# Architecture: "Aura Up!" (working title) v1
+_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1, 2026-10-31 (D-016).
+Replaces the Candy Factory Tycoon architecture (D-009, superseded by D-011). Built from docs/gdd.md v1 (D-015).
 Source of truth for code contracts: `src/shared/Contracts/Remotes.luau` and `src/shared/Contracts/Types.luau`.
-Both must match this file. Includes lawyer rulings D-008 (no group bonus, shop hides owned/lower tiers, donor-board opt-out)._
+Both must match this file. Applies lawyer rulings D-016 (policy gate, next-tier-only ladder, restricted receipts).
+The GDD is still awaiting owner approval (gate 1): prices, odds and tiers can change, and
+they live only in config (`EconomyConfig`, product catalogue), so a change there does not change this contract._
 
 ## 0. Ground rules
-- **Server-authoritative economy.** All Cash math runs in `src/server/Gameplay`. Candy on belts is client-only
-  visuals in `src/client/Effects`: no physical candy parts on the server, no remote per candy, nothing to exploit.
-- **Pads, gates and the seller rebirth button are physical** and detected on the server (`BasePart.Touched`,
-  `ProximityPrompt.Triggered`), so they need no remotes. Only UI-initiated actions use remotes.
-- **State reaches clients through attributes** (Player and plot attributes, one writer each), not remotes.
-  Remotes are only for UI actions (C->S) and one-shot toasts/effects (S->C).
-- **Folder boundaries.** Each programmer edits only their folders (CLAUDE.md). Modules may `require` (read)
-  any other folder's public API listed here, never edit it. Anything shared that is not in a programmer's
-  folder lives in `src/shared/Contracts` and changes only through a Contract request (section 6).
-- **Cross-module calls only after `Init()`.** `Init()` sets up local state and never yields or calls other
-  services. Cross-service calls and signal connections happen in `Start()` or later.
-- **Signals** are `BindableEvent`s owned by the emitting service and exposed as `RBXScriptSignal`
-  (`Service.Something: RBXScriptSignal`). No signal library.
-- **Only direct-child ModuleScripts are services.** The bootstraps require every ModuleScript directly in
-  `Data`, `World`, `Gameplay` (server) and `UI`, `Effects` (client). Put helper modules in a subfolder
-  (e.g. `src/server/Gameplay/Util/`) so the bootstrap does not treat them as services.
+- **Server-authoritative everything.** MP, coins, the multiplier, boss wins, egg rolls, pity, duel scores, duel
+  results and rewards are computed on the server only. The client sends **intents** (tap counts, "fight boss X",
+  "hatch egg Y") and draws what the server tells it. The client never sends an amount, a price, a result or a roll.
+- **Physical things are detected on the server.** The World 2 portal is a server `Touched` check and pod presence
+  is a server zone check, so they need no remotes. Shop stands are `ProximityPrompt`s that only open UI (GDD 8b).
+  **There are no purchase pads** (GDD 8b).
+- **State reaches clients through attributes** (section 1d, one writer each), not remotes. Remotes are only for
+  UI intents (C->S) and one-shot results/effects (S->C). **No RemoteFunctions in v1**: nothing waits on a client.
+- **Folder boundaries.** Each programmer edits only their folders (CLAUDE.md). Modules may `require` (read) any
+  public API listed here, never edit it. Shared cross-folder contracts live in `src/shared/Contracts` and change
+  only through a Contract request (section 8).
+- **`Init()` never yields and never calls another service.** Cross-service calls and signal connections happen in
+  `Start()` or later. Every `Start()` also handles players already in `Players:GetPlayers()`.
+- **Signals** are `BindableEvent`s owned by the emitting service, exposed as `RBXScriptSignal`. No signal library.
+- **Only direct-child ModuleScripts are services.** Helpers go in a subfolder (e.g. `src/server/Gameplay/Util/`).
+- **One balance file.** Every number in GDD 4-8 lives in `src/shared/Gameplay/EconomyConfig` (pure data and pure
+  functions). Server and client read the same file, so the odds the UI shows are the odds the server rolls.
 
 ## 1. Module map
 Path prefix: `ServerScriptService.Server` = `src/server`, `ReplicatedStorage.Shared` = `src/shared`,
-`StarterPlayerScripts.Client` = `src/client`. `T.` = `Contracts/Types`.
+`StarterPlayerScripts.Client` = `src/client`. `T.` = `Contracts/Types`. All functions are yield-free unless
+marked **yields**. Every Gameplay entry point that takes a `Player` returns `(boolean, string?)` = ok, reason
+when it can fail.
 
-### 1a. Server
-| Module | Owner | Folder | Responsibility |
-|---|---|---|---|
-| DataService | systems-programmer | `src/server/Data` | ProfileStore sessions, Data API, Player data attributes, leaderstats, `SetDonorPrivacy` handler, BindToClose |
-| MonetizationService | systems-programmer | `src/server/Data` | Multiplier-pass ownership (`UserOwnsGamePassAsync`, `PromptGamePassPurchaseFinished`), the only `ProcessReceipt`, donation rewards |
-| LeaderboardService | systems-programmer | `src/server/Data` | 3 OrderedDataStores, 60 s write/refresh, hub boards (tag `Leaderboard`), donor opt-out |
-| PlotService | world-programmer | `src/server/World` | 6 plots, claim gate + 20 s auto-claim, ownership, release on leave, pad touch detection, pad reveal (only next 2 pads shown), seller rebirth prompt |
-| IncomeService | gameplay-programmer | `src/server/Gameplay` | 1 Hz income tick, multipliers, `IncomePerSec`/`TotalMultiplier` attributes |
-| PurchaseService | gameplay-programmer | `src/server/Gameplay` | Validates and applies dropper/upgrade purchases from `PlotService.PadTouched` |
-| RebirthService | gameplay-programmer | `src/server/Gameplay` | `RequestRebirth` handler + seller prompt, reset, `RebirthCost` attribute |
-| DailyRewardService | gameplay-programmer | `src/server/Gameplay` | `ClaimDailyReward` handler, 7-day streak, `Daily*` attributes |
-| BadgeAwardService | gameplay-programmer | `src/server/Gameplay` | Welcome / FirstRebirth / Rebirth5 / Rebirth10 via `BadgeService:AwardBadge` |
-
-Public functions (`self` methods are called with `:`; plain functions with `.`; all yield-free unless marked **yields**):
-
-**DataService** (`src/server/Data/DataService.luau`): see section 3 "Data API".
-
-**MonetizationService** (`src/server/Data/MonetizationService.luau`)
-```luau
-MonetizationService.PassTierChanged: RBXScriptSignal -- (player: Player, tier: T.PassTier)
-function MonetizationService.getPassTier(player: Player): T.PassTier       -- 0 until checked
-function MonetizationService.getPassMultiplier(player: Player): number     -- 1, 2, 4, 8 or 16
+### 1a. Dependency direction (no cycles; arrows mean "may require")
 ```
-Purchases are prompted on the client (`MarketplaceService:PromptGamePassPurchase` / `PromptProductPurchase`
-from UI), so no purchase remote exists. No other module may assign `MarketplaceService.ProcessReceipt`.
+Gameplay  --->  World  --->  Data  --->  (Packages, Contracts, shared config)
+   |                          ^
+   +--------------------------+
+Inside Gameplay, layers (a module may require only lower layers):
+  L0  ActivityService, MultiplierService
+  L1  RankService, ShopService, PetService, BossService
+  L2  TapService, RebirthService
+  L3  IdleService, DuelService, QuestService, RewardService
+Client: UI and Effects never require each other or any server module.
+Shared: Contracts, EconomyConfig, MapLayout, EffectsConfig require nothing but each other (no Roblox services
+        except in MapLayout, which reads CollectionService).
+```
+Upward calls are done by **inversion**, never by requiring up:
+- Data -> Gameplay (receipt grants): Gameplay services call `MonetizationService.registerGrant(kind, fn)` in `Start()`.
+- TapService -> DuelService (duel taps): DuelService calls `TapService.setTapSink(player, sink)` while a duel runs.
+- Anything -> QuestService / TelemetryService: QuestService listens to the L1/L2 signals; Gameplay calls
+  `TelemetryService` (Data layer) directly.
 
-**LeaderboardService** (`src/server/Data/LeaderboardService.luau`): no public functions (reads DataService itself).
+### 1b. Server services
+| # | Module | Owner | Folder | Responsibility |
+|---|---|---|---|---|
+| 1 | DataService | systems | `src/server/Data` | ProfileStore sessions, Data API (section 3), data attributes, leaderstats, `SetSetting` handler |
+| 2 | MonetizationService | systems | `src/server/Data` | The only `ProcessReceipt`, receipt dedupe, `RequestPurchase` gate + server-side prompt, entitlement attributes, grant registry |
+| 3 | ComplianceService | systems | `src/server/Data` | PolicyService check per player, `PaidRandomAllowed` attribute (fail closed) |
+| 4 | LeaderboardService | systems | `src/server/Data` | OrderedDataStores (Lifetime MP, Rebirths, weekly Duel Wins, Donors), hub boards + podium data |
+| 5 | TelemetryService | systems | `src/server/Data` | Thin wrapper over Roblox `AnalyticsService`; funnel dedupe via `profile.milestones` (section 6) |
+| 6 | ZoneService | world | `src/server/World` | Current world per player, portal, pod presence, stage/stand/ring lookup + distance checks, ring reservation, teleports |
+| 7 | CharacterService | world | `src/server/World` | Single writer of Humanoid `WalkSpeed`/`JumpPower`; applies rank looks/fits (accessories); movement locks |
+| 8 | ActivityService | gameplay | `src/server/Gameplay` | Per-player exclusive activity (Idle/BossFight/Hatching/Duel); `Activity` attribute |
+| 9 | MultiplierService | gameplay | `src/server/Gameplay` | The multiplier pipeline (section 4a), timed boosts, coin multiplier |
+| 10 | RankService | gameplay | `src/server/Gameplay` | Rank ladder from lifetime MP, rank-up moment, look id |
+| 11 | ShopService | gameplay | `src/server/Gameplay` | `BuyTool`, `BuyPod` (coins), pod/tool grants from receipts |
+| 12 | PetService | gameplay | `src/server/Gameplay` | `HatchEgg` (coin eggs), Robux egg grants, server roll + pity, inventory, `EquipPet`, `DeletePets` |
+| 13 | BossService | gameplay | `src/server/Gameplay` | `RequestBossFight`, 3 s fight, coins, `FirstWin`, best-boss income |
+| 14 | TapService | gameplay | `src/server/Gameplay` | `TapBatch`, tap token bucket, the only MP adder (`addMp`) |
+| 15 | RebirthService | gameplay | `src/server/Gameplay` | `RequestRebirth`, atomic reset, Skip Rebirth grant |
+| 16 | IdleService | gameplay | `src/server/Gameplay` | 1 Hz loop: pod MP/s, Auto-Tap, Auto-Mog |
+| 17 | DuelService | gameplay | `src/server/Gameplay` | Duel state machine, challenges, anti-grief, scoring, rewards (section 4c) |
+| 18 | QuestService | gameplay | `src/server/Gameplay` | Tutorial quest chain, `TutorialDone` (unlocks duels + Starter Pack pop-up timing) |
+| 19 | RewardService | gameplay | `src/server/Gameplay` | Daily 7-day calendar, `ClaimDailyReward`, `RedeemCode` |
 
-**PlotService** (`src/server/World/PlotService.luau`)
+**Public APIs**
 ```luau
-PlotService.PlotClaimed: RBXScriptSignal            -- (player: Player, plotId: T.PlotId)
-PlotService.PlotReleased: RBXScriptSignal           -- (player: Player, plotId: T.PlotId), fires on leave
-PlotService.PadTouched: RBXScriptSignal             -- (player: Player, plotId: T.PlotId, padId: T.PadId)
-                                                    --   only for the plot owner, Available pads, 0.5 s debounce per pad
-PlotService.RebirthPromptTriggered: RBXScriptSignal -- (player: Player, plotId: T.PlotId), owner only
-function PlotService.getPlotId(player: Player): T.PlotId?
-function PlotService.getOwner(plotId: T.PlotId): Player?
-function PlotService.getPlotModel(plotId: T.PlotId): Model?
-function PlotService.setProgress(plotId: T.PlotId, progress: T.PlotProgress): ()
-    -- sets plot attributes and every pad's PadState/PadLevel; reveals the next 2 pads in EconomyConfig order
+-- DataService: section 3.
+
+-- MonetizationService
+MonetizationService.EntitlementsChanged: RBXScriptSignal -- (player: Player)
+function MonetizationService.registerGrant(kind: T.GrantKind,
+	fn: (player: Player, key: T.ProductKey, data: T.ProfileData) -> boolean): ()
+	-- fn mutates `data` synchronously (no yields, no other DataService calls); false = cannot grant now
+function MonetizationService.getPaidTier(player: Player): number      -- 0..5 (0 = none, 5 = x32)
+function MonetizationService.hasVip(player: Player): boolean
+function MonetizationService.owns(player: Player, key: T.ProductKey): boolean -- permanent entitlements only
+
+-- ComplianceService
+function ComplianceService.paidRandomAllowed(player: Player): boolean -- false until checked (fail closed)
+
+-- TelemetryService (never per tap; callers pass server-computed values only)
+function TelemetryService.funnel(player: Player, step: T.FunnelStep): ()          -- deduped per profile
+function TelemetryService.economy(player: Player, flow: "Source" | "Sink", amount: number,
+	reason: T.CoinReason): ()
+function TelemetryService.custom(player: Player, name: T.CustomEvent, value: number?): ()
+
+-- ZoneService
+ZoneService.PodChanged: RBXScriptSignal  -- (player: Player, podIndex: number) 0 = left all pods
+ZoneService.WorldChanged: RBXScriptSignal -- (player: Player, worldId: T.WorldId)
+function ZoneService.getWorld(player: Player): T.WorldId
+function ZoneService.getPod(player: Player): number
+function ZoneService.isNearBoss(player: Player, bossId: string): boolean      -- <= EconomyConfig.INTERACT_RANGE
+function ZoneService.isNearEggStand(player: Player, eggId: T.EggId): boolean
+function ZoneService.reserveRing(worldId: T.WorldId): number?                 -- ring index or nil if both busy
+function ZoneService.releaseRing(worldId: T.WorldId, ringIndex: number): ()
+function ZoneService.teleportToRing(player: Player, worldId: T.WorldId, ringIndex: number, side: 1 | 2): ()
+function ZoneService.getRingKnockback(worldId: T.WorldId, ringIndex: number): Vector3 -- unit vector to foam pit
+function ZoneService.teleportToWorld(player: Player, worldId: T.WorldId): boolean -- checks unlock
+
+-- CharacterService
+function CharacterService.setLook(player: Player, lookId: string): ()        -- respects ShowOwnLook setting
+function CharacterService.setSpeedMultiplier(player: Player, mult: number): ()
+function CharacterService.setMovementLocked(player: Player, reason: string, locked: boolean): () -- reason-keyed
+
+-- ActivityService
+function ActivityService.tryBegin(player: Player, activity: T.Activity): boolean -- false if not Idle
+function ActivityService.finish(player: Player, activity: T.Activity): ()
+function ActivityService.get(player: Player): T.Activity
+
+-- MultiplierService (section 4a)
+MultiplierService.Changed: RBXScriptSignal -- (player: Player, m: number)
+function MultiplierService.getMpMultiplier(player: Player): number    -- M, clamped
+function MultiplierService.getCoinMultiplier(player: Player): number
+function MultiplierService.refresh(player: Player): ()
+function MultiplierService.addBoost(player: Player, kind: T.BoostKind, seconds: number): () -- caps at 2 h
+
+-- RankService
+RankService.RankUp: RBXScriptSignal -- (player: Player, rank: number)
+function RankService.onLifetimeMp(player: Player, lifetimeMp: number): () -- called by TapService only
+function RankService.getRank(player: Player): number
+
+-- ShopService
+ShopService.ToolBought: RBXScriptSignal -- (player: Player, toolIndex: number)
+ShopService.PodBought: RBXScriptSignal  -- (player: Player, podIndex: number)
+function ShopService.tryBuyTool(player: Player, toolIndex: number): (boolean, string?)
+function ShopService.tryBuyPod(player: Player, podIndex: number): (boolean, string?)
+function ShopService.getToolPower(player: Player): number
+
+-- PetService
+PetService.Hatched: RBXScriptSignal -- (player: Player, eggId: T.EggId, results: { T.HatchedPet })
+function PetService.tryHatch(player: Player, eggId: T.EggId, count: number): (boolean, string?) -- coin eggs
+function PetService.grantEgg(player: Player, eggId: T.EggId, count: number): boolean -- Robux / daily, no cost
+function PetService.getPetMultiplierSum(player: Player): number -- sum of equipped bonuses (before cap)
+function PetService.freeSlots(player: Player): number -- inventory space left
+
+-- BossService
+BossService.BossWon: RBXScriptSignal -- (player: Player, bossId: string, coins: number, auto: boolean)
+function BossService.tryFight(player: Player, bossId: string, auto: boolean): (boolean, string?)
+function BossService.bestBeatable(player: Player): string? -- strongest boss in current world with MP >= need
+function BossService.bestCoinsPerSec(player: Player): number -- for packs, daily, duel rewards
+
+-- TapService
+function TapService.addTaps(player: Player, count: number, source: "Manual" | "Auto"): number -- accepted
+function TapService.addMp(player: Player, amount: number, source: T.MpSource): () -- the only MP writer
+function TapService.setTapSink(player: Player, sink: ((accepted: number) -> ())?): ()
+
+-- RebirthService
+RebirthService.Rebirthed: RBXScriptSignal -- (player: Player, rebirths: number)
+function RebirthService.tryRebirth(player: Player, skip: boolean): (boolean, string?)
+function RebirthService.getCost(player: Player): number
+
+-- IdleService: no public functions.
+-- DuelService
+function DuelService.isInDuel(player: Player): boolean
+-- QuestService
+QuestService.TutorialCompleted: RBXScriptSignal -- (player: Player)
+function QuestService.isTutorialDone(player: Player): boolean
+-- RewardService: no public functions.
+-- LeaderboardService: no public functions.
 ```
 
-**IncomeService** (`src/server/Gameplay/IncomeService.luau`)
-```luau
-function IncomeService.getBaseIncomePerSecond(player: Player): number -- droppers x Gears x Glaze x Rebirth, no pass
-function IncomeService.getIncomePerSecond(player: Player): number     -- base x PassMult
-function IncomeService.getTotalMultiplier(player: Player): number     -- Glaze x Rebirth x Pass (for client pops)
-function IncomeService.refresh(player: Player): ()                    -- recompute after purchase/rebirth/pass change
-```
-Formula (GDD 5): per dropper, every `interval(gearsLevel)` seconds, `value x GlazeMult x RebirthMult x PassMult`.
-Implemented as one server loop at 1 Hz with a per-dropper time accumulator, so Cash and its attribute change
-at most once per second per player. **No group bonus** (D-008).
+### 1c. Shared modules
+| # | Module | Owner | Folder | Contents |
+|---|---|---|---|---|
+| 20 | Contracts/Remotes | integration | `src/shared/Contracts` | Remote list + per-remote rate limits, `setup`, `get`, `getEvent`, `getFunction` |
+| 21 | Contracts/Types | integration | `src/shared/Contracts` | Exported types, attribute/tag names, schema version |
+| 22 | Gameplay/EconomyConfig | gameplay | `src/shared/Gameplay` | All GDD 4-7 numbers: tools, pods, bosses, rebirth, ranks, eggs (odds as integer weights summing to 10,000), pets, duel and tap caps, `M_CLAMP`, pure formula functions |
+| 23 | World/MapLayout | world | `src/shared/World` | Tag/attribute accessors for builder's map (nil-safe for streaming) |
+| 24 | Physics/EffectsConfig | physics | `src/shared/Physics` | Ragdoll impulse/duration, pool sizes, particle budgets, camera timings |
 
-**PurchaseService** (`src/server/Gameplay/PurchaseService.luau`)
-```luau
-function PurchaseService.tryPurchase(player: Player, padId: T.PadId): (boolean, string?) -- ok, failure reason
-```
-Validation: profile loaded; player owns the plot; pad is the next dropper in order or an unlocked upgrade
-below level 3; `DataService.trySpendCash` succeeds. On success: `DataService.update`, `PlotService.setProgress`,
-`IncomeService.refresh`, `PlayEffect("Purchase")` to all clients. On "not enough Cash": `Notify` Error (max 1 per 2 s).
-
-**RebirthService** (`src/server/Gameplay/RebirthService.luau`)
-```luau
-function RebirthService.getRebirthCost(player: Player): number   -- EconomyConfig.rebirthCost(rebirths + 1)
-function RebirthService.tryRebirth(player: Player): (boolean, string?)
-```
-Atomic reset in one `DataService.update`: cash = START_CASH (50), droppersOwned = 1, upgrades = 0, rebirths += 1.
-
-**DailyRewardService** (`src/server/Gameplay/DailyRewardService.luau`)
-```luau
-function DailyRewardService.tryClaim(player: Player): (boolean, string?)
-```
-Uses server `os.time()` only. Once per UTC day; streak resets if `now - lastClaimUnix > 48 h`. Reward =
-base $/s x GDD seconds (min $100), never multiplied by passes. Re-checks `DailyClaimable` once per minute.
-
-**BadgeAwardService** (`src/server/Gameplay/BadgeAwardService.luau`)
-```luau
-function BadgeAwardService.award(player: Player, key: T.BadgeKey): () -- **yields** (call in task.spawn); idempotent via profile.badges
-```
-
-### 1b. Shared (read-only for everyone except the owner)
-| Module | Owner | Folder | Contents |
-|---|---|---|---|
-| Contracts/Remotes | integration-programmer | `src/shared/Contracts` | remote list, `setup`, `get`, `getEvent`, `getFunction` |
-| Contracts/Types | integration-programmer | `src/shared/Contracts` | exported types, `PlayerAttr`, `PlotAttr`, `Tag`, schema version |
-| Gameplay/EconomyConfig | gameplay-programmer | `src/shared/Gameplay` | all balance constants + pure functions (below) |
-| World/PlotLayout | world-programmer | `src/shared/World` | pure accessors for builder's plot model (below) |
-| Physics/CandyConfig | physics-programmer | `src/shared/Physics` | visual constants: pool size, belt speed, pop style |
+Sprint-1 integration tickets add to Contracts: `ProductCatalog.luau` (ProductKey -> product id, grant kind,
+price label; ids filled after the owner creates and approves the products), `RateLimit.luau` (token bucket used by
+every C->S handler, reads `Remotes.Definitions[name].rate/burst`), `NumberFormat.luau` (K/M/B/T/Qa).
 
 ```luau
--- EconomyConfig (pure, no Roblox services). Used by Gameplay, World (pad order), UI and Effects.
-EconomyConfig.START_CASH: number                    -- 50
-EconomyConfig.DROPPERS: { { name: string, cost: number, value: number } } -- 10 entries, index = dropper #
-EconomyConfig.UPGRADES: { [T.UpgradeId]: { costs: { number }, unlockAfterDropper: number } }
-EconomyConfig.PAD_ORDER: { T.PadId }                -- fixed reveal order
-EconomyConfig.BADGE_IDS: { [T.BadgeKey]: number }   -- 0 = not created yet (skip award)
-function EconomyConfig.interval(gearsLevel: number): number      -- 2.0 / 1.6 / 1.33 / 1.0
-function EconomyConfig.glazeMult(glazeLevel: number): number     -- 1 / 1.5 / 2 / 3
+-- EconomyConfig surface other folders rely on (gameplay-programmer fills the values from GDD 4-7)
+EconomyConfig.TAP_CAP_PER_SEC: number          -- 12 (manual + auto, PvE)
+EconomyConfig.DUEL_TAP_CAP_PER_SEC: number     -- 10
+EconomyConfig.M_CLAMP: number                  -- 10000 (v1; raised per world in later updates)
+EconomyConfig.PET_MULT_CAP: number             -- 25
+EconomyConfig.INVENTORY_CAP: number            -- 60
+EconomyConfig.INTERACT_RANGE: number           -- 20 studs (boss stage, egg stand)
+EconomyConfig.TOOLS / PODS / BOSSES / RANKS / EGGS / PETS -- arrays/maps, GDD tables
+function EconomyConfig.rebirthCost(n: number): number            -- 15000 x 3^(n-1)
 function EconomyConfig.rebirthMult(rebirths: number): number     -- 1 + 0.5 x rebirths
-function EconomyConfig.rebirthCost(n: number): number            -- 6e6 x 2^(n-1)
-function EconomyConfig.padCost(padId: T.PadId, level: number): number?
-
--- PlotLayout (pure; nil-safe because StreamingEnabled may not have streamed the part in yet)
-function PlotLayout.getPlotModels(): { Model }                   -- CollectionService tag "Plot"
-function PlotLayout.getGate(plot: Model): BasePart?
-function PlotLayout.getPad(plot: Model, padId: T.PadId): BasePart?
-function PlotLayout.getDropper(plot: Model, index: number): Model?
-function PlotLayout.getDropperSpout(plot: Model, index: number): Attachment?
-function PlotLayout.getConveyorPath(plot: Model): { Vector3 }    -- ordered waypoints, spout area -> seller
-function PlotLayout.getSeller(plot: Model): BasePart?
+function EconomyConfig.coinRebirthMult(rebirths: number): number -- 1 + 0.1 x rebirths
+function EconomyConfig.paidTierMult(tier: number): number        -- 1, 2, 4, 8, 16, 32
+function EconomyConfig.petSlots(rebirths: number, vip: boolean): number -- 3, +1 R3, +1 R8, +1 VIP
+function EconomyConfig.duelScore(taps: number, ownRank: number, oppRank: number): number
+function EconomyConfig.validate(): () -- asserts every egg's weights sum to 10000; qa runs it in tests
 ```
 
-### 1c. Client
-| Controller | Owner | Folder | Responsibility |
-|---|---|---|---|
-| HudController | systems-programmer | `src/client/UI` | Cash, $/s, rebirth bar + button (fires `RequestRebirth`), onboarding hint/arrow until `PlotId` > 0, K/M/B/T suffixes |
-| ShopController | systems-programmer | `src/client/UI` | Pass ladder + donations; prompts purchases; hides/disables tiers <= `PassTier` with "does not stack" text (D-008); donor-board opt-out toggle (fires `SetDonorPrivacy`) |
-| DailyRewardController | systems-programmer | `src/client/UI` | Popup from `Daily*` attributes, fires `ClaimDailyReward` |
-| NotificationController | systems-programmer | `src/client/UI` | `Notify` handler, toast queue (max 3 visible) |
-| CandyController | physics-programmer | `src/client/Effects` | Client-only candy on belts for nearby plots, pooled (max 40 per plot) |
-| EffectsController | physics-programmer | `src/client/Effects` | `PlayEffect` handler, seller "+$" pops, purchase/rebirth/donation effects |
-| PadVisualController | physics-programmer | `src/client/Effects` | Local pad tint (green when local `Cash` >= cost), dropper idle animations |
+### 1d. Client controllers
+| # | Controller | Owner | Folder | Responsibility |
+|---|---|---|---|---|
+| 25 | HudController | systems | `src/client/UI` | MP/coins/rank meters, boss "Need X MP" button state + MOG button (fires `RequestBossFight`), quest arrow, rebirth button, shop buttons hidden until `FirstWin` |
+| 26 | TapController | systems | `src/client/UI` | Tap capture (touch/click not over GUI), local cap 12/s, sends `TapBatch` every 0.5 s; local "+N" from `MpPerTap` |
+| 27 | ShopController | systems | `src/client/UI` | Tools, pods, Robux shop (fires `BuyTool`, `BuyPod`, `RequestPurchase`); shows only ladder tier `PaidTier + 1`, with "Does not stack: the highest tier you own applies" (D-008, D-016 #8) |
+| 28 | EggController | systems | `src/client/UI` | Egg UI with exact odds, bonuses, "you own" ticks and pity counter before every purchase; hides Robux eggs when `PaidRandomAllowed` is false; `HatchEgg`, `HatchResult` |
+| 29 | PetsController | systems | `src/client/UI` | Inventory (60), equip/unequip/equip best (`EquipPet`), multi-delete (`DeletePets`) |
+| 30 | DuelController | systems | `src/client/UI` | Challenge button on players, accept/decline, countdown, tap-off HUD, result, rematch, block (`DuelChallenge`, `DuelRespond`, `DuelRematch`, `SetDuelBlock`, `DuelState`) |
+| 31 | RewardsController | systems | `src/client/UI` | Daily calendar (`ClaimDailyReward`), codes box (`RedeemCode`) |
+| 32 | SettingsController | systems | `src/client/UI` | Toggles (`SetSetting`) |
+| 33 | NotificationController | systems | `src/client/UI` | `Notify` toasts (max 3) and server banners |
+| 34 | EffectsController | physics | `src/client/Effects` | `PlayEffect` dispatch: tap sparkles (pooled), coin bursts, boss pose-off + boss ragdoll (local clone), purchase/donation effects |
+| 35 | RagdollController | physics | `src/client/Effects` | Local player's own duel knockback ragdoll (2.5 s), only when the server names the local user |
+| 36 | PetFollowController | physics | `src/client/Effects` | Renders every nearby player's equipped pets from `EquippedPets` (client-only models, float follow) |
+| 37 | CinematicController | physics | `src/client/Effects` | Spawn camera pan, rank-up orbit/spotlight, hatch animation (skippable) |
 
-Client controllers have **no public functions**: UI and Effects never `require` each other. They read attributes,
-`EconomyConfig`, `PlotLayout`, `CandyConfig`, and the remotes below.
+Client controllers have no public functions. They read attributes, shared config and the remotes below.
 
-### 1d. Attribute contract (one writer each; names in `Types.PlayerAttr` / `Types.PlotAttr`)
-| Instance | Attribute | Type | Writer |
-|---|---|---|---|
-| Player | DataLoaded, Cash, Rebirths, HideFromDonorBoard | boolean, number, number, boolean | DataService |
-| Player | PassTier | number 0..4 | MonetizationService |
-| Player | PlotId | number, 0 = none | PlotService |
-| Player | IncomePerSec, TotalMultiplier | number | IncomeService |
-| Player | RebirthCost | number | RebirthService |
-| Player | DailyStreak, DailyClaimable, DailyNextClaimUnix | number, boolean, number | DailyRewardService |
-| Plot model | PlotId | number | builder (in place) |
-| Plot model | OwnerUserId, DroppersOwned, GearsLevel, GlazeLevel | number | PlotService |
-| Pad part | PadState, PadLevel | T.PadState, number | PlotService |
+### 1e. Attribute contract (state replication; one writer each; names in `Types.PlayerAttr`)
+All on the `Player` instance unless stated. Writers flush changes at most **5 Hz** per player (MP and coins are
+coalesced), so attribute traffic stays inside the budget in section 7.
+| Attribute | Type | Writer |
+|---|---|---|
+| DataLoaded, Coins, Mp, LifetimeMp, Rebirths | boolean, number x4 | DataService |
+| SettingDuelRequests, SettingShowOwnLook, SettingAutoDeleteCommons, SettingHideFromDonorBoard, SettingAutoTap, SettingAutoMog | boolean | DataService |
+| PaidTier (0..5), Vip, AutoClickerOwned, AutoMogEarlyOwned, StarterPackOwned | number, boolean x4 | MonetizationService |
+| PaidRandomAllowed | boolean (false until checked) | ComplianceService |
+| WorldId (1/2), World2Unlocked, CurrentPod (0 = none) | number, boolean, number | ZoneService |
+| Activity | `T.Activity` | ActivityService |
+| Multiplier, CoinMultiplier, HypeEndsAt, CoinSnackEndsAt, SpeedEndsAt | number (EndsAt = `workspace:GetServerTimeNow()` time, 0 = off) | MultiplierService |
+| Rank, LookId | number, string | RankService |
+| ToolIndex, PodsMask (bit i = pod i owned) | number | ShopService |
+| EquippedPets (comma list of pet ids, for rendering), PetCount, PetSlots, PityStarEgg, PityGalaxyEgg | string, number x4 | PetService |
+| FirstWin, BestCoinsPerSec | boolean, number | BossService |
+| MpPerTap | number (ToolPower x M) | TapService |
+| RebirthCost | number | RebirthService |
+| IdleMpPerSec, AutoTapRate, AutoMogUnlocked | number, number, boolean | IdleService |
+| InDuel, DuelWinsWeek | boolean, number | DuelService |
+| QuestStep, TutorialDone | number, boolean | QuestService |
+| DailyStreak, DailyClaimable, DailyNextClaimUnix | number, boolean, number | RewardService |
 
-leaderstats (`Cash`, `Rebirths` NumberValues) are created and written by DataService only.
+leaderstats (`Rank`, `Rebirths` IntValues) are created and written by DataService only (from profile on update).
+Humanoid `WalkSpeed`/`JumpPower` are written by CharacterService only. Boss/pod/ring map parts carry builder
+attributes only (section 1f); no code writes map attributes.
 
-### 1e. Map contract (builder places these in the Studio place; PlotLayout is the only code that knows names)
-- 6 plot Models tagged `Plot` with attribute `PlotId` 1..6, `ModelStreamingMode = Atomic`. Children: `Gate`
-  (part), `Pads` (folder, one part per `PadId`), `Droppers` (folder, Models `1`..`10`, each with Attachment `Spout`),
-  `Conveyor` (folder of Attachments `P1`..`Pn` in path order), `Seller` (part).
-- 3 leaderboard boards tagged `Leaderboard` with attribute `Board` = `Rebirths` | `TotalCash` | `Donors`.
-- Exact child names are finalised by world-programmer in PlotLayout and logged in `docs/asset-briefs/`.
+### 1f. Map contract (builder places these; MapLayout is the only code that knows names)
+| Tag | Attributes | Use |
+|---|---|---|
+| `BossStage` | `BossId` (string), `WorldId` | stage anchor part + boss model (`ModelStreamingMode = Atomic`) |
+| `Pod` | `PodIndex` 1..7, `WorldId` | pod zone part (non-collide box), presence checked on server |
+| `EggStand` | `EggId`, `WorldId` | ProximityPrompt opens egg UI (no purchase prompt) |
+| `ShopStand` | `Shop` = `Tools` / `Robux`, `WorldId` | ProximityPrompt opens shop UI |
+| `MogRing` | `RingIndex` 1..2, `WorldId`; children `Side1`, `Side2`, `Pit` (parts) | duel arenas |
+| `Portal` | `ToWorldId` | world travel (server `Touched`) |
+| `Spawn` | `WorldId` | world spawn |
+| `Leaderboard` | `Board` = `LifetimeMp` / `Rebirths` / `DuelWinsWeek` / `Donors` | hub boards |
+| `Podium` | `Place` 1..3 | top-3 Lifetime MP looks |
+Look/pet/fit templates: builder puts them in `ReplicatedStorage.Assets.Pets` and `ServerStorage.Assets.Looks`
+(models named by pet id / look id). Logged in docs/asset-briefs/asset-log.md.
 
 ## 2. Remotes
-Matches `Remotes.Definitions` exactly (5 remotes, all RemoteEvents). Payload types are in `Contracts/Types.luau`.
+Matches `Remotes.Definitions` exactly: **20 RemoteEvents (16 C->S, 4 S->C), 0 RemoteFunctions.** Payload types
+are in `Contracts/Types.luau`. Rate limits are token buckets (`rate` per second, `burst`) per player per remote;
+excess calls are **dropped silently** (no error reply, so spam earns nothing).
 
-| Name | Kind | Direction | Payload | Server validation | Rate limit | Owner module |
+**Handler rules for every C->S remote:** signature `function(player: Player, ...: any)`; `typeof`-check every
+argument and drop on mismatch; numbers must be finite (`x == x` and `math.abs(x) ~= math.huge`) and integers
+where stated; strings length-capped before any other use; rate limit before any work; profile must be loaded
+(`DataLoaded`); never yield before validation; never trust client ids, amounts or prices; rate-limit state is
+cleared on `PlayerRemoving`.
+
+| # | Name | Dir | Payload | Server validation | Rate (per s / burst) | Handler (sender) |
 |---|---|---|---|---|---|---|
-| RequestRebirth | RemoteEvent | Client -> Server | none (extra args ignored) | profile loaded; plot claimed; `Cash >= RebirthCost` computed on server; reuses `RebirthService.tryRebirth` | 1 per 2 s per player, excess dropped | Gameplay/RebirthService (handler); UI/HudController (sender) |
-| ClaimDailyReward | RemoteEvent | Client -> Server | none (extra args ignored) | profile loaded; server `os.time()` is a new UTC day since `daily.lastClaimUnix`; reward computed on server | 1 per 2 s per player | Gameplay/DailyRewardService (handler); UI/DailyRewardController (sender) |
-| SetDonorPrivacy | RemoteEvent | Client -> Server | `hidden: boolean` | `typeof(hidden) == "boolean"` else drop; profile loaded; no-op if unchanged | 1 per 1 s per player | Data/DataService (handler); UI/ShopController (sender) |
-| Notify | RemoteEvent | Server -> Client | `T.NotifyPayload` | n/a (server builds text; never echoes client strings) | server sends <= 2 per s per player | UI/NotificationController (handler); fired by any server service |
-| PlayEffect | RemoteEvent | Server -> Client | `effect: T.EffectId, payload: T.EffectPayload` | n/a (cosmetic only; client never sends back) | <= 5 per s per server; `FireAllClients` for plot effects | Effects/EffectsController (handler); fired by Gameplay services and MonetizationService |
+| 1 | TapBatch | C->S | `count: number` | integer 1..`TAP_BATCH_MAX` (30); token bucket at `TAP_CAP_PER_SEC` (12) minus the player's `AutoTapRate`, burst 1 s; in a duel the tap sink applies the duel clamp (section 4c); excess taps dropped | 4 / 4 | Gameplay/TapService (UI/TapController) |
+| 2 | RequestBossFight | C->S | `bossId: string` | len <= 32; id in `EconomyConfig.BOSSES`; boss `WorldId` == player `WorldId`; `ZoneService.isNearBoss`; `Mp >= need`; `ActivityService.tryBegin("BossFight")`; 4 s cycle (fight 3 s, then 1 s); after 3 s re-check player still present, then award | 1 / 2 | Gameplay/BossService (UI/HudController) |
+| 3 | BuyTool | C->S | `toolIndex: number` | integer; `== ToolIndex + 1`; tool's world unlocked; `trySpendCoins(cost)` | 2 / 3 | Gameplay/ShopService (UI/ShopController) |
+| 4 | BuyPod | C->S | `podIndex: number` | integer 1..#PODS; not owned; pod's world unlocked; `trySpendCoins(cost)` | 2 / 3 | Gameplay/ShopService (UI/ShopController) |
+| 5 | RequestRebirth | C->S | none (extra args ignored) | `Coins >= cost` computed on server; not in duel; atomic reset in one `DataService.update` | 0.5 / 1 | Gameplay/RebirthService (UI/HudController) |
+| 6 | HatchEgg | C->S | `eggId: string, count: number` | eggId in `EGGS` and **coin** egg (Robux eggs only via `RequestPurchase`); count is 1, or 3 with `Rebirths >= 2`; egg world unlocked; `isNearEggStand`; `freeSlots >= count` (counting auto-delete); `ActivityService.tryBegin("Hatching")` (released after 1 s server-side; the 2 s animation is client-only and skippable); `trySpendCoins(price x count)`; roll on server | 1 / 2 | Gameplay/PetService (UI/EggController) |
+| 7 | EquipPet | C->S | `petUid: string, equip: boolean` | len <= 12; uid in player's inventory; equip needs a free slot (`PetSlots`); no-op if unchanged | 8 / 10 | Gameplay/PetService (UI/PetsController) |
+| 8 | DeletePets | C->S | `petUids: { string }` | array, 1..60 entries, each len <= 12, no duplicates; all owned; equipped pets are unequipped first | 1 / 2 | Gameplay/PetService (UI/PetsController) |
+| 9 | DuelChallenge | C->S | `targetUserId: number` | integer; target in this server and != self; both `TutorialDone`; target `SettingDuelRequests`; target has not blocked sender (session); sender not auto-muted by target; both `Activity == Idle` and not `InDuel`; sender has no pending outgoing; 15 s cooldown per target; ring free | 0.5 / 1 | Gameplay/DuelService (UI/DuelController) |
+| 10 | DuelRespond | C->S | `challengerUserId: number, accept: boolean` | integer + boolean; a pending challenge from that user to this player exists and is < 10 s old; on accept re-run every challenge check | 1 / 2 | Gameplay/DuelService (UI/DuelController) |
+| 11 | DuelRematch | C->S | `accept: boolean` | boolean; player's last duel ended < 10 s ago; opponent still present; both accept -> new duel, same ring | 1 / 2 | Gameplay/DuelService (UI/DuelController) |
+| 12 | SetDuelBlock | C->S | `targetUserId: number, blocked: boolean` | integer + boolean; target != self; session-only list, max 50 entries | 1 / 3 | Gameplay/DuelService (UI/DuelController) |
+| 13 | RequestPurchase | C->S | `productKey: string` | key in `ProductCatalog`; `FirstWin` (GDD 8a, all products); Robux eggs need `PaidRandomAllowed` and `freeSlots >= count`; ladder tier `== PaidTier + 1` only (D-016 #8); permanent items not owned; Starter Pack once; Skip Rebirth only for rebirths 1-10; Skip World 2 only if not unlocked. This is a **prompt** gate only (UX, D-016 #9); then server calls `MarketplaceService:PromptProductPurchase(player, id)` | 0.5 / 2 | Data/MonetizationService (UI/ShopController, EggController) |
+| 14 | ClaimDailyReward | C->S | none | server UTC day > `daily.lastClaimDay`; streak resets if a day was missed; reward computed on server | 0.5 / 1 | Gameplay/RewardService (UI/RewardsController) |
+| 15 | RedeemCode | C->S | `code: string` | len 1..20, `^[%w]+$`, upper-cased; code in RewardService's server-only list and active; not redeemed before (`profile.codes`); 10 wrong codes in 10 min -> 10 min lockout | 0.33 / 2 | Gameplay/RewardService (UI/RewardsController) |
+| 16 | SetSetting | C->S | `key: string, value: boolean` | key in `T.SettingKey`; boolean; `AutoTap` needs Auto-Tap unlocked or owned, `AutoMog` needs it unlocked; no-op if unchanged | 2 / 5 | Data/DataService (UI/SettingsController) |
+| 17 | Notify | S->C | `T.NotifyPayload` | n/a (server builds text, never echoes client strings) | server sends <= 2/s per player; banners `FireAllClients` <= 1/s per server | UI/NotificationController (any server service) |
+| 18 | PlayEffect | S->C | `effect: T.EffectId, payload: T.EffectPayload` | n/a (cosmetic) | <= 10/s per server; boss wins only to players in the same world | Effects/EffectsController (Gameplay services, MonetizationService) |
+| 19 | HatchResult | S->C | `T.HatchResultPayload` | n/a | 1 per hatch, to the hatcher only | UI/EggController + Effects/CinematicController (PetService) |
+| 20 | DuelState | S->C | `T.DuelStatePayload` | n/a | on phase change only, to the 1-2 duelists | UI/DuelController + Effects/RagdollController (DuelService) |
 
-Handler rules for every C->S remote: signature `function(player: Player, ...: any)`; type-check every argument
-with `typeof`; reject NaN/inf numbers; per-player rate limit with `os.clock()` timestamps, cleared on
-`PlayerRemoving`; never yield inside the handler before validation; never trust client-sent amounts, ids or prices.
-`PlayEffect` effect ids: `PlotClaimed` {plotId, userId}, `Purchase` {plotId, padId}, `Rebirth` {plotId, userId},
-`DailyReward` {amount} (to the claimer only), `Donation` {userId, tier} (tier 1..5 = Small..Mega; userId omitted if opted out).
+`PlayEffect` ids: `BossWin` {userId, bossId, amount}, `RankUp` {userId, rank}, `Rebirth` {userId, rebirths},
+`DuelKnockback` {userId, direction} (loser only), `DuelBounce` {userId} (draw), `Purchase` {userId, productKey},
+`Donation` {userId?, tier} (userId omitted if opted out), `DailyReward` {amount}.
 
 ## 3. Data schema and Data API (owned by systems-programmer)
-**Store:** ProfileStore (section 4), store name `PlayerData_v1`, key `Player_<UserId>`. Session-locked.
+**Store:** ProfileStore (session-locked), store name `AuraUp_PlayerData_v1`, key `Player_<UserId>`.
+If a profile cannot be loaded (session lock held elsewhere or a DataStore outage), the player is kicked with a
+friendly "please rejoin" message. Nothing else touches DataStoreService for player data.
 
-### Profile schema v1 (`T.ProfileData`)
-| Field | Type | Default | Since | Written by (through the Data API) |
+### 3a. Profile schema v1 (`T.ProfileData`)
+| Field | Type | Default | Reset on rebirth | Written by (through `DataService.update`) |
 |---|---|---|---|---|
-| schemaVersion | number | 1 | v1 | DataService (migrations) |
-| cash | number | 50 | v1 | `addCash` / `trySpendCash`, RebirthService (reset) |
-| droppersOwned | number 1..10 | 1 | v1 | PurchaseService, RebirthService |
-| upgrades.FasterGears / .SugarGlaze | number 0..3 | 0 / 0 | v1 | PurchaseService, RebirthService |
-| rebirths | number | 0 | v1 | RebirthService |
-| daily.streak / .lastClaimUnix | number | 0 / 0 | v1 | DailyRewardService |
-| stats.totalCashEarned | number | 0 | v1 | DataService (`addCash` with reason Income or DailyReward) |
-| stats.robuxDonated | number | 0 | v1 | MonetizationService |
-| stats.firstJoinUnix / .playTimeSec | number | now / 0 | v1 | DataService |
-| settings.hideFromDonorBoard | boolean | false | v1 | DataService (`SetDonorPrivacy`) |
-| badges | { [BadgeKey]: boolean } | {} | v1 | BadgeAwardService |
-| receipts | { string } (last 50 PurchaseIds) | {} | v1 | MonetizationService |
+| schemaVersion | number | 1 | no | DataService (migrations) |
+| coins | number | 0 | yes | addCoins / trySpendCoins |
+| mp / lifetimeMp | number | 0 / 0 | mp yes / lifetime no | TapService |
+| rebirths / skipRebirthsUsed | number | 0 / 0 | no | RebirthService |
+| toolIndex | number 1..12 | 1 | yes (to 1) | ShopService, RebirthService |
+| podsMask | number (bits 1..7) | 0 | no | ShopService |
+| world2Unlocked | boolean | false | no | ZoneService (Rebirth 3 or Skip World 2) |
+| firstWin | boolean | false | no | BossService |
+| rank | number 1..12 | 1 | no | RankService |
+| quest | { step: number, done: boolean } | {1, false} | no | QuestService |
+| pets | { inventory: { [uid]: { id: string } }, equipped: { string }, nextUid: number } | empty, 1 | no | PetService |
+| pity | { [EggId]: number } | {} | no | PetService (Robux eggs only) |
+| entitlements | { paidTier: number, vip, autoClicker, autoMogEarly, starterPack: boolean, cosmetics: { [string]: boolean } } | 0 / false | no | MonetizationService |
+| boosts | { hypeSec, coinSec, speedSec: number } (remaining seconds, tick only while online) | 0 | no | MultiplierService |
+| daily | { streak: number, lastClaimDay: number (UTC days since epoch) } | 0, 0 | no | RewardService |
+| codes | { [string]: boolean } | {} | no | RewardService |
+| duel | { weekId: number, weekWins: number, rewardLog: { { t: number, opp: number } } (last 1 h) } | 0, 0, {} | no | DuelService |
+| settings | { duelRequests, showOwnLook, autoDeleteCommons, hideFromDonorBoard, autoTap, autoMog: boolean } | true, true, false, false, true, true | no | DataService (`SetSetting`) |
+| stats | { firstJoinUnix, playTimeSec, totalCoinsEarned, bossWins, duelWins, duelsPlayed, robuxDonated: number } | now, 0... | no | owners of each stat |
+| milestones | { [FunnelStep]: boolean } | {} | no | TelemetryService (funnel dedupe) |
+| receipts | { string } (last 100 PurchaseIds, FIFO) | {} | no | MonetizationService |
 
-Rules: numbers are plain Luau numbers (doubles; exact to 2^53, enough for v1 rebirth costs). New fields are added
-with defaults through `Profile:Reconcile()`; renames/removals bump `schemaVersion` with a migration in DataService.
-Passes are never stored (checked live). Rebirth keeps rebirths, daily, stats, settings, badges, receipts.
+Rules: plain doubles (exact to 2^53; v1 max values ~1e10). New fields are added with defaults through
+`Profile:Reconcile()`; renames/removals bump `schemaVersion` with a migration step in DataService. Duel
+`settings.duelRequests` is forced off for the client until `quest.done` (GDD 6).
 
-### Data API (`src/server/Data/DataService.luau`)
+### 3b. Data API (`src/server/Data/DataService.luau`)
 ```luau
 DataService.ProfileLoaded: RBXScriptSignal    -- (player: Player, data: T.ProfileData)
 DataService.ProfileReleasing: RBXScriptSignal -- (player: Player) just before the session ends
 function DataService.isLoaded(player: Player): boolean
-function DataService.getData(player: Player): T.ProfileData?       -- READ-ONLY for callers
+function DataService.getData(player: Player): T.ProfileData?           -- READ-ONLY for callers
 function DataService.waitForData(player: Player, timeoutSec: number?): T.ProfileData? -- **yields**, default 30 s
-function DataService.getCash(player: Player): number
-function DataService.addCash(player: Player, amount: number, reason: T.CashReason): number -- amount > 0, finite; returns new cash
-function DataService.trySpendCash(player: Player, amount: number, reason: T.CashReason): boolean
+function DataService.addCoins(player: Player, amount: number, reason: T.CoinReason): number -- finite, > 0
+function DataService.trySpendCoins(player: Player, amount: number, reason: T.CoinReason): boolean
 function DataService.update(player: Player, mutator: (data: T.ProfileData) -> ()): boolean
-    -- runs mutator synchronously (it must not yield), then re-syncs DataService attributes and leaderstats;
-    -- false if the profile is not loaded
+	-- mutator runs synchronously (must not yield); then DataService marks its attributes dirty (5 Hz flush)
+function DataService.getSetting(player: Player, key: T.SettingKey): boolean
 ```
-Other modules never touch ProfileStore, DataStoreService for player data, or the profile table directly
-except inside `update`. Saving: ProfileStore auto-save plus an explicit `Profile:Save()` every 60 s (GDD),
-on leave (`Profile:EndSession()`), and on shutdown (ProfileStore handles `BindToClose`). If a profile cannot be
-loaded (session lock or DataStore outage), DataService kicks the player with a friendly retry message.
-Receipts: `ProcessReceipt` returns `PurchaseGranted` only after the PurchaseId is in `receipts` and the profile
-is saved; otherwise `NotYetProcessed`. TODO(verify-api): confirm exact ProfileStore method names
-(`StartSessionAsync`, `Reconcile`, `Save`, `EndSession`, `OnSessionEnd`) against the installed version in sprint 1.
+Saving: ProfileStore auto-save, on leave (`EndSession`), and on shutdown (ProfileStore's `BindToClose`).
 
-Global leaderboards (LeaderboardService): OrderedDataStores `LB_Rebirths_v1`, `LB_TotalCash_v1`, `LB_Donors_v1`,
-integer values (`math.floor`), written once per 60 s per player only if changed, top 50 read every 60 s.
-Donors board shows **name and rank only**, never Robux amounts, and skips opted-out players (D-008; final
-amount display is an owner decision).
+### 3c. ProcessReceipt and receipt-id dedupe (MonetizationService, the only assigner of `ProcessReceipt`)
+1. Find the player by `receiptInfo.PlayerId`; if absent or profile not loaded -> `NotYetProcessed` (Roblox retries).
+2. If `PurchaseId` is in `profile.receipts` -> `PurchaseGranted` (already granted; idempotent).
+3. Look up the ProductKey by `ProductId`; unknown id -> log + `NotYetProcessed`.
+4. In **one** `DataService.update`: call the registered grant fn for the key's `GrantKind` with that update's
+   `data` table, then append the PurchaseId (trim to 100). If the grant returns false, nothing is recorded and the
+   answer is `NotYetProcessed`. After the update, fire `EntitlementsChanged` so services refresh attributes.
+5. Wait for the profile save that contains that PurchaseId, then return `PurchaseGranted`. If the session ends
+   first -> `NotYetProcessed`.
+Every valid paid receipt is delivered (D-016 #9): the FirstWin rule gates prompts, never receipts. A Robux-egg
+receipt for a player whose `PaidRandomAllowed` is false grants the egg's **disclosed non-random outcome**
+(`EconomyConfig.EGGS[eggId].restrictedGrant`, a fixed pet shown in the product description), never a random roll
+and never nothing (D-016 #4). No product bundles an egg (D-016 #5).
+`TODO(verify-api)`: exact ProfileStore names (`ProfileStore.New`, `StartSessionAsync`, `Reconcile`, `Save`,
+`EndSession`, `OnSave`/`OnAfterSave`, `OnSessionEnd`) against the installed version in sprint 1.
 
-## 4. Startup order and packages
+### 3d. Global leaderboards (LeaderboardService)
+OrderedDataStores `LB_LifetimeMp_v1`, `LB_Rebirths_v1`, `LB_DuelWins_w<weekId>` (weekId = Saturday 00:00 UTC
+weeks), `LB_Donors_v1`. Integer values (`math.floor`), written once per 60 s per player only if changed; top 50
+read every 120 s. Donors board shows **names and rank only**, skips opted-out players (D-008).
+
+## 4. Authority models
+### 4a. Multiplier pipeline (MultiplierService, server-only)
+```
+PetMult     = min(PET_MULT_CAP (25), 1 + PetService.getPetMultiplierSum(player))
+RebirthMult = EconomyConfig.rebirthMult(rebirths)                 -- 1 + 0.5 x R
+PaidTier    = EconomyConfig.paidTierMult(highest owned tier)      -- x1/2/4/8/16/32, never stacked
+Vip         = 1.25 if owned else 1
+Boost       = 2 while boosts.hypeSec > 0 else 1
+M           = clamp(PetMult x RebirthMult x PaidTier x Vip x Boost, 1, M_CLAMP (10,000))   -- NaN -> 1
+MP per tap  = ToolPower x M            MP/s in pod = PodRate x M
+Coins/win   = BossCoins x coinRebirthMult(R) x (2 if coinSec > 0)  -- pets and paid tiers never touch coins
+```
+Recomputed only on events (pet equip/delete, rebirth, `EntitlementsChanged`, boost start/end), never per tap; the
+cached value is used by TapService/IdleService. Duels never read M (section 4c). The client sees `Multiplier` for
+display only and never sends it.
+
+### 4b. Egg/pet roll (PetService, server-only)
+- Odds come from `EconomyConfig.EGGS[eggId].pets` as integer weights summing to 10,000 (0.5% = 50). The UI renders
+  the same table as percentages. `EconomyConfig.validate()` asserts the sums at server start and in qa tests.
+- One server `Random.new()` (unseeded = engine seed) owned by PetService; the client never sees or sends a seed.
+- **Pity (Robux eggs only):** `pity[eggId]` counts hatches since the last Legendary-or-better. On the 10th
+  (`pity == 9` before rolling) with no hit, the roll is forced to the Legendary/Mythic subset weighted 90/10. Any
+  Legendary+ resets to 0. A 3-pack counts as 3 hatches in order. Coin eggs have no pity.
+- Grants are atomic: cost, roll, inventory insert and pity update in one `DataService.update`. Auto-delete
+  Commons (setting) applies after the roll; results report `autoDeleted = true`.
+- Inventory cap 60: coin hatches are rejected before charging; Robux eggs are blocked at `RequestPurchase` when
+  space is short; a receipt that still arrives full may exceed the cap by up to 6 (hard cap 66) so no paid pet is lost.
+- Daily Day-4 free hatch uses `grantEgg` (coin egg of the best unlocked world).
+
+### 4c. PvP duel authority (DuelService)
+Server state machine per duel: `Pending (10 s) -> Countdown (3 s) -> Active (8 s) -> Result (2.5 s) -> Rematch
+window (10 s) -> Ended`. Phase times are sent as `workspace:GetServerTimeNow()` timestamps in `DuelState`, so both
+clients show the same clock.
+- **Start:** challenge checks in section 2 #9; on accept, `ZoneService.reserveRing` (challenger's world if the
+  target has it unlocked, else World 1), `ActivityService.tryBegin("Duel")` for both (atomic: roll back if either
+  fails), teleport, `CharacterService.setMovementLocked(.., "Duel", true)`. Auto-Tap and Auto-Mog pause for duelists.
+- **Taps:** `TapService.setTapSink` routes the duelist's `TapBatch` to DuelService. Accepted = `min(count,
+  DUEL_TAP_CAP_PER_SEC x (now - lastAccepted))`, counted only for batches received in `[activeStart, activeEnd +
+  0.5 s grace]`, and the total is capped at `10 x 8 = 80`. No PvE MP is earned from duel taps.
+- **Score:** `EconomyConfig.duelScore(taps, ownRank, oppRank)` = taps x (1 + 0.03 x min(ownRank, oppRank + 2)).
+  Pets, PaidTier, VIP, boosts and auto-tap are never read. Equal scores = draw.
+- **Result:** server picks the winner, sends `DuelState` Result, fires `PlayEffect DuelKnockback` with the ring's
+  pit direction. The loser's own client applies the ragdoll (it owns its character's physics), and CharacterService
+  keeps the movement lock for 2.5 s. The server never applies forces outside the ring and only to the two duelists.
+- **Rewards (server only):** +1 week win and `120 x BossService.bestCoinsPerSec(winner)` coins, only if the
+  winner's `duel.rewardLog` has < 5 entries in the last hour and < 2 vs this opponent in the last 15 min. Losers
+  lose nothing.
+- **Anti-grief:** 1 pending outgoing challenge; 15 s cooldown per target; 3 declines in a row from the same
+  target -> challenger muted for that target for 10 min; session block list; Pending auto-declines at 10 s.
+- **Forfeit:** leaving, character death/removal, or teleport out = forfeit, no reward to anyone; ring released.
+- **Rematch:** both `DuelRematch(true)` within 10 s -> new Countdown in the same ring (ring kept reserved).
+
+### 4d. PolicyService gate for Robux eggs (ComplianceService)
+- Called on the **server** (works for any player there; on the client only for LocalPlayer, confirmed by lawyer
+  from Roblox creator-docs, D-016 #2). Result cached per player; the attribute is for UI only.
+- On join (in `task.spawn`), `pcall(PolicyService.GetPolicyInfoForPlayerAsync, PolicyService, player)`, up to 3
+  tries with 2/4/8 s backoff. `PaidRandomAllowed = not info.ArePaidRandomItemsRestricted`. Any failure ->
+  `false` (**fail closed**: Robux eggs hidden and unsellable).
+- Server gate: `RequestPurchase` rejects `StarEgg1/3`, `GalaxyEgg1/3` when not allowed. Client gate: EggController
+  hides Robux egg stands/UI from the attribute (cosmetic; the server gate is the real one).
+- **Coin eggs: blocker B-1 (D-016), owner picks.** Option A (stop selling coins): drop `CoinPouch/Bag/Vault`,
+  `CoinSnack`, the Starter Pack coins and VIP's daily x2 coins from the catalogue; coin eggs stay ungated; no
+  remote change. Option B (gate coin eggs): `EconomyConfig.COIN_EGGS_POLICY_GATED = true`, `HatchEgg` also needs
+  `PaidRandomAllowed`, and restricted players get a non-random path, which needs one new remote (e.g.
+  `BuyPetDirect`) through a Contract request. Until the owner picks, PetService reads the flag (default `true`,
+  the safe reading) so no restricted player can hatch a coin egg.
+- Pity UI (D-016 #3): when `Pity<Egg> == 9`, EggController shows the real next-hatch odds (Legendary 90 / Mythic
+  10) and the pity rule in words; the counter is saved in `profile.pity`.
+- Group Crew Cap (D-016 #6, owner decision): if approved, a server `IsInGroup` check at join grants a cosmetic only;
+  no remote and no gameplay effect.
+
+### 4e. Purchase prompts and the FirstWin gate (MonetizationService)
+Every prompt is server-initiated after `RequestPurchase` validation, so the FirstWin rule (GDD 8a) cannot be
+bypassed by a modified client. The client never calls `PromptProductPurchase`. All 34 GDD products are developer
+products (`T.ProductKey`); permanent ones are entitlements in the profile, re-applied on join.
+
+## 5. Analytics events (TelemetryService)
+`TODO(verify-api)`: confirm the Roblox `AnalyticsService` method names and parameters (`LogOnboardingFunnelStepEvent`,
+`LogFunnelStepEvent`, `LogEconomyEvent`, `LogCustomEvent`, `LogProgressionEvent`) and their limits in sprint 1.
+| Event | Kind | When | Value |
+|---|---|---|---|
+| Spawn, FirstTap, FirstWin, FirstUpgrade, FirstPod, FirstRankUp, FirstEgg, TutorialDone, FirstRebirth | onboarding funnel, once per profile (`milestones`) | the first time it happens | seconds since `firstJoinUnix` (also logged as custom `TimeTo<Step>`) |
+| Coins source | economy | BossWin, DuelReward, Daily, Code, Pack, StarterPack | amount |
+| Coins sink | economy | Tool, Pod, Egg, Rebirth | amount |
+| Purchase | custom | each granted receipt (after dedupe) | Robux price; product key as event name suffix |
+| DuelPlayed / DuelWon / DuelDraw / DuelForfeit | custom | duel end | duel seconds |
+| SessionLength | custom | `PlayerRemoving` | seconds |
+| RankUp / Rebirth | progression | each | new rank / rebirth count |
+Never per tap, never more than 1 event per 5 s average per player.
+
+## 6. Startup order and packages
 ### Server (`src/server/Main.server.luau`, unchanged)
 1. `Remotes.setup()` creates `ReplicatedStorage.Remotes` with every remote.
 2. Require direct-child modules of `Data`, then `World`, then `Gameplay`.
 3. `Init()` on all, same order (local state, BindableEvents, no yields, no cross-service calls).
-4. `Start()` on all via `task.spawn`: connect remotes, signals, `PlayerAdded`/`PlayerRemoving`, loops.
-   Every `Start()` also handles players already in `Players:GetPlayers()`.
-
-Player join: DataService loads the profile (yields) -> `ProfileLoaded`; PlotService waits for gate touch or
-20 s auto-claim -> `PlotClaimed`; Gameplay, on `PlotClaimed`, calls `DataService.waitForData` then
-`PlotService.setProgress` and `IncomeService.refresh`; MonetizationService checks passes after join -> `PassTierChanged`
--> `IncomeService.refresh`. Player leave: Gameplay drops per-player state, PlotService resets the plot,
-DataService ends the session. Order of `PlayerRemoving` handlers does not matter: Cash lives in the profile at all times.
+4. `Start()` on all via `task.spawn`: grants registered, remotes and signals connected, loops started.
+Player join: DataService loads (yields) -> `ProfileLoaded` -> MonetizationService applies entitlements,
+ComplianceService checks policy, ZoneService sets world, Gameplay services compute their attributes,
+MultiplierService refreshes. Every handler checks `DataLoaded` first, so early remotes are dropped.
+Player leave: Gameplay drops per-player state (DuelService forfeits, rings released), DataService ends the session.
 
 ### Client (`src/client/Main.client.luau`, unchanged)
-Require `UI` then `Effects`; `Init()` all, then `Start()` all. Controllers wait for `DataLoaded == true` before
-showing Cash and handle plots streaming in/out (StreamingEnabled is on).
+Require `UI` then `Effects`; `Init()` all, then `Start()` all. Controllers wait for `DataLoaded == true` and handle
+map parts streaming in/out (StreamingEnabled is on).
 
 ### Wally packages
 | Package | Realm | Use | Why |
 |---|---|---|---|
-| ProfileStore (loleris) | server | DataService only | Session locking prevents item/cash duplication and lost saves when a player server-hops or a server crashes mid-save; handles retries, DataStore budget, auto-save and `BindToClose`. Writing that ourselves is days of risky work for a 3-week launch. |
+| ProfileStore (loleris) | server | DataService only | Session locking prevents coin/pet duplication and lost saves on server hops or crashes; handles retries, budget, auto-save and `BindToClose`. Writing that ourselves is days of risky work. |
+`[server-dependencies]` line: `ProfileStore = "lm-loleris/profilestore@1.0.3"` -
+`TODO(verify-api)`: confirm scope/name/version with `wally search profilestore`. **Not added yet: sprint-1
+integration ticket.** No framework (the bootstrap replaces Knit), no networking library (20 events), no signal lib.
 
-Dependency line for `wally.toml` `[server-dependencies]` (installs to `ServerPackages`, already mapped in
-`default.project.json`): `ProfileStore = "lm-loleris/profilestore@1.0.3"`.
-TODO(verify-api): confirm scope/name/version with `wally search profilestore` before adding.
-**Not added yet: sprint-1 integration ticket.** No other packages: the bootstrap replaces a framework (no Knit),
-5 remotes need no networking library, signals use BindableEvent, validation uses `typeof`.
+### Sprint-1 integration tickets
+1. Add ProfileStore to `wally.toml`, `wally install`, verify API names (section 3c).
+2. `Contracts/ProductCatalog.luau` (34 keys -> ids, grant kinds), `Contracts/RateLimit.luau`, `Contracts/NumberFormat.luau`.
 
-### Sprint-1 integration tickets (integration-programmer)
-1. Add ProfileStore to `wally.toml`, run `wally install`, verify the API names flagged above.
-2. `src/shared/Contracts/MonetizationConfig.luau`: pass ids/tiers/multipliers and donation product ids/tiers
-   (ids filled in after the owner creates and approves them; read by MonetizationService and ShopController).
-3. `src/shared/Contracts/NumberFormat.luau`: K/M/B/T formatter shared by UI and LeaderboardService.
-4. `src/shared/Contracts/RateLimit.luau`: tiny per-player `os.clock()` limiter used by every C->S handler.
-
-## 5. Performance budgets (target: low-end mobile, ~2 GB RAM phone, 6 players)
+## 7. Performance budgets (target: low-end mobile, ~2 GB RAM phone, 12 players)
 | Area | Budget |
 |---|---|
-| Client memory (Developer Console total) | <= 700 MB on mobile; place assets (meshes + textures) <= 150 MB |
-| Parts in Workspace | hub <= 3,000; each plot <= 1,200 at full build (10 droppers); total <= 11,000 |
-| Unique meshes / textures | <= 80 meshes; textures <= 512 px (1024 only for signage) |
-| Candy visuals | <= 40 per plot, only plots within 200 studs; pooled, anchored, `CanCollide/CanTouch/CanQuery = false`, `CastShadow = false`; moved in one `RenderStepped`/`Heartbeat` loop with `workspace:BulkMoveTo` |
-| Client frame time | Effects <= 2 ms/frame, UI <= 1 ms/frame on low-end mobile; no per-candy connections |
-| Particles / lights / sounds | <= 200 particles alive; no dynamic lights on candy; <= 8 concurrent sounds |
-| Server tick | one 1 Hz income loop for all players; server script time <= 5 % (6 players) |
-| Remote traffic | C->S <= 1 msg/s avg per player; S->C <= 2 KB/s per player; attribute writes <= 3/s per player |
-| DataStore | 1 save per player per 60 s + on leave; leaderboard writes <= 3 per player per 60 s; reads 3 per 60 s |
-| Streaming | StreamingEnabled on; plots `Atomic`; client code never assumes a plot is streamed in |
-
+| Client memory (Developer Console total) | <= 700 MB on mobile; place assets <= 200 MB |
+| Parts in Workspace | each world hub <= 6,000; total <= 14,000; boss models <= 150 parts each |
+| Meshes / textures | <= 120 unique meshes; textures <= 512 px (1024 only for signage); pets <= 1,500 tris each |
+| Pets rendered (client) | equipped pets of players within 120 studs only; <= 36 pet models alive; one Heartbeat loop with `workspace:BulkMoveTo`; no per-pet connections; no collisions/touch/query |
+| Looks | <= 6 accessories per character; aura = 1 ParticleEmitter, rate <= 20 |
+| Particles / sounds | <= 300 particles alive; tap sparkles pooled (20); <= 8 concurrent sounds |
+| Client frame time | Effects <= 2 ms, UI <= 1 ms per frame on low-end mobile |
+| Remote traffic | C->S <= 3 msgs/s avg per player (TapBatch 2/s); S->C <= 2 KB/s per player |
+| Attribute writes | flushed <= 5 Hz per player; IdleService loop 1 Hz for all players |
+| Server | server script time <= 6 % at 12 players; one 1 Hz loop, no per-player loops |
+| DataStore | ProfileStore auto-save + on leave; leaderboard writes <= 4 per player per 60 s; reads every 120 s |
+| Streaming | StreamingEnabled on; boss stages, rings and podium `Atomic`; code never assumes a part is streamed in |
 qa measures these in `/sprint` builds with the Developer Console on the smallest test device.
 
-## 6. Contract requests
+## 8. Contract requests
 Programmers add requests through their summary; team-lead routes them here. integration-programmer decides.
 
 | # | From | Request | Status |
