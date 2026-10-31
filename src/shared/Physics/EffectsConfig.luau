@@ -129,6 +129,92 @@ EffectsConfig.Pools = table.freeze({
 			drag = 2,
 		}),
 	}),
+	-- Duel effects (T-066). Pastel foam and "boing" puffs only: no injury imagery (GDD 6, 9).
+	FoamSplash = table.freeze({
+		size = 2, -- one landing per ring at a time
+		look = table.freeze({
+			texture = SPARKLE_TEXTURE,
+			color = Color3.fromRGB(190, 240, 255),
+			lightEmission = 0.3,
+			sizeStart = 1.4,
+			sizeEnd = 0.6,
+			lifetimeMin = 0.6,
+			lifetimeMax = 1.0,
+			speedMin = 10,
+			speedMax = 18,
+			spread = 60,
+			gravity = 30,
+			drag = 2,
+		}),
+	}),
+	DuelBounce = table.freeze({
+		size = 4, -- both duelists of up to 2 rings
+		look = table.freeze({
+			texture = SPARKLE_TEXTURE,
+			color = Color3.fromRGB(255, 220, 120),
+			lightEmission = 0.8,
+			sizeStart = 0.9,
+			sizeEnd = 0,
+			lifetimeMin = 0.4,
+			lifetimeMax = 0.7,
+			speedMin = 8,
+			speedMax = 12,
+			spread = 180,
+			gravity = 0,
+			drag = 3,
+		}),
+	}),
+	DuelWin = table.freeze({
+		size = 2,
+		look = table.freeze({
+			texture = SPARKLE_TEXTURE,
+			color = Color3.fromRGB(255, 240, 150),
+			lightEmission = 1,
+			sizeStart = 1.1,
+			sizeEnd = 0,
+			lifetimeMin = 0.8,
+			lifetimeMax = 1.3,
+			speedMin = 8,
+			speedMax = 16,
+			spread = 60,
+			gravity = 10,
+			drag = 2,
+		}),
+	}),
+})
+
+-- Duel knockback ragdoll and ring effects (T-066, GDD 6, architecture 4c). The server picks the loser and sends
+-- `PlayEffect DuelKnockback {userId}` (loser only); only that user's own client ragdolls its own character, only
+-- inside a Mog Ring, and it always stands up after `duration`. Studio tuning with the real ring is T-089 (Mac).
+EffectsConfig.Ragdoll = table.freeze({
+	duration = 2.5, -- seconds ragdolled (GDD 6); matches the server's Result phase and movement lock
+	flightTime = 0.9, -- seconds of the arc from the ring into the pit
+	pitAimHeight = 1.5, -- studs above the Pit part's top surface the arc aims at
+	minUpSpeed = 28, -- studs/s; every launch goes up at least this fast (cartoon arc, never a flat shove)
+	maxLaunchSpeed = 110, -- studs/s cap on the launch, whatever the map or payload says
+	fallbackHorizontal = 32, -- studs/s along the payload direction when the Pit is not streamed in
+	fallbackUp = 45, -- studs/s up in that case
+	spinSpeed = 9, -- rad/s tumble on the torso (a cartoon flip or two)
+	jointAngle = 50, -- degrees; BallSocket cone limit (floppy, never bent-backwards limbs)
+	twistAngle = 35, -- degrees; BallSocket twist limit
+	ringPad = 8, -- studs added around the ring model's box for "inside a ring"
+	resultWindow = 4, -- seconds after a DuelState Result in which a knockback is still accepted
+	cooldown = 3.5, -- seconds between two ragdolls (> duration), however many the server sends
+	splashParticles = 40,
+	-- Draw: both duelists get a light bounce.
+	bounceUpSpeed = 34, -- studs/s, the local player's own hop
+	bounceParticles = 18,
+	bounceHeight = 2, -- studs above the root for the puff
+	-- Winner pose banner.
+	winParticles = 30,
+	winHeight = 4,
+	bannerTime = 2.2, -- seconds on screen
+	bannerPopTime = 0.25, -- seconds of the scale-in (one tween)
+	winText = "MOGGED!",
+	winSubText = "Strike a pose!",
+	drawText = "DRAW! BOING!",
+	loseText = "FOAM PIT!",
+	bannerColor = Color3.fromRGB(255, 230, 120),
 })
 
 -- Rank-up moment (T-043, GDD 7: 3 s, spotlight, confetti, camera orbit, the new look pops on).
@@ -291,6 +377,48 @@ function EffectsConfig.hatchTimes(count: number): (number, number)
 	return revealStart, lastPop + h.holdTime
 end
 
+-- Pure: a unit vector from an untrusted payload value, flattened to the ground plane. nil if unusable.
+function EffectsConfig.flatDirection(value: unknown): Vector3?
+	if typeof(value) ~= "Vector3" then
+		return nil
+	end
+	local v = value :: Vector3
+	local flat = Vector3.new(v.X, 0, v.Z)
+	local m = flat.Magnitude
+	if m ~= m or m < 1e-3 or m == math.huge then
+		return nil
+	end
+	return flat / m
+end
+
+-- Pure: clamps a launch velocity to Ragdoll.maxLaunchSpeed and gives it at least Ragdoll.minUpSpeed upwards.
+function EffectsConfig.clampLaunch(v: Vector3): Vector3
+	local r = EffectsConfig.Ragdoll
+	if v.X ~= v.X or v.Y ~= v.Y or v.Z ~= v.Z or v.Magnitude == math.huge then
+		return Vector3.new(0, r.minUpSpeed, 0)
+	end
+	local out = Vector3.new(v.X, math.max(v.Y, r.minUpSpeed), v.Z)
+	if out.Magnitude > r.maxLaunchSpeed then
+		out = out.Unit * r.maxLaunchSpeed
+	end
+	return out
+end
+
+-- Pure: the launch velocity that carries a body from `from` to `to` in Ragdoll.flightTime under `gravity`
+-- (studs/s^2, Workspace.Gravity), then clampLaunch. Ballistic: v = d / T + (0, g T / 2, 0).
+function EffectsConfig.launchVelocity(from: Vector3, to: Vector3, gravity: number): Vector3
+	local t = EffectsConfig.Ragdoll.flightTime
+	local g = if gravity == gravity and gravity > 0 and gravity < math.huge then gravity else 196.2
+	return EffectsConfig.clampLaunch((to - from) / t + Vector3.new(0, 0.5 * g * t, 0))
+end
+
+-- Pure: the fallback launch along a flat direction (Pit not streamed in), or straight up without one.
+function EffectsConfig.fallbackLaunch(direction: Vector3?): Vector3
+	local r = EffectsConfig.Ragdoll
+	local flat = if direction then direction * r.fallbackHorizontal else Vector3.zero
+	return EffectsConfig.clampLaunch(flat + Vector3.new(0, r.fallbackUp, 0))
+end
+
 -- Asserts the budgets hold together (qa can call this in tests).
 function EffectsConfig.validate()
 	for name, spec: PoolSpec in EffectsConfig.Pools do
@@ -331,6 +459,19 @@ function EffectsConfig.validate()
 	assert(p.maxModels >= p.maxPerPlayer, "pet model cap below one player's slots")
 	assert(p.maxModels <= 36, "pet model cap above architecture 7 budget (36)")
 	assert(p.renderRadius <= 120, "pet render radius above architecture 7 budget (120)")
+	-- Duel effects: every duel pool busy at once, plus tap sparkles, fits in the cap.
+	local rd = EffectsConfig.Ragdoll
+	assert(rd.cooldown > rd.duration, "ragdoll cooldown must outlast the ragdoll")
+	assert(rd.flightTime < rd.duration, "ragdoll arc longer than the ragdoll")
+	assert(rd.minUpSpeed <= rd.maxLaunchSpeed, "ragdoll launch limits inverted")
+	local pools = EffectsConfig.Pools
+	local duelWorst = rd.splashParticles * pools.FoamSplash.size
+		+ rd.bounceParticles * pools.DuelBounce.size
+		+ rd.winParticles * pools.DuelWin.size
+	assert(
+		duelWorst + worstCase <= EffectsConfig.MAX_PARTICLES_ALIVE,
+		"duel effects + tap sparkles exceed cap"
+	)
 end
 
 return table.freeze(EffectsConfig)
