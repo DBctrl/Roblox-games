@@ -159,6 +159,31 @@ EconomyConfig.DAILY_REWARDS = table.freeze(daily)
 EconomyConfig.DAILY_VIP_HYPE_SEC = 10 * 60
 EconomyConfig.DAY_SEC = 24 * 60 * 60 -- UTC day length for the calendar
 
+-- Tutorial quest chain (GDD 9). Step i is profile.quest.step == i; after the last step quest.done is true and
+-- duels unlock. Exactly one goal field per row. The UI shows `text`; QuestService checks the goal on the server.
+export type QuestStep = {
+	text: string,
+	bossWins: number?, -- lifetime boss wins (stats.bossWins) at least this
+	toolIndex: number?, -- owns this tool or a better one
+	beatBoss: string?, -- win against this boss id while on this step
+	podIndex: number?, -- owns this pod
+	rank: number?, -- rank at least this
+	hatch: boolean?, -- hatch any egg while on this step
+}
+local quests: { QuestStep } = {
+	{ text = "Win 5 boss fights", bossWins = 5 },
+	{ text = "Buy Hair Gel", toolIndex = 2 },
+	{ text = "Beat Bedhead Benny", beatBoss = "BedheadBenny" },
+	{ text = "Unlock the Ring Light Pod", podIndex = 1 },
+	{ text = "Buy the Bubble Face Mask", toolIndex = 3 },
+	{ text = "Rank up to Comb Rookie", rank = 2 },
+	{ text = "Hatch your first pet", hatch = true },
+}
+for _, row in quests do
+	table.freeze(row)
+end
+EconomyConfig.QUEST_STEPS = table.freeze(quests)
+
 -- Tools (GDD 4.2; reset on rebirth) ----------------------------------------------------------------------
 local tools: { Tool } = {
 	{ name = "Pocket Comb", mpPerTap = 1, cost = 0, world = 1 },
