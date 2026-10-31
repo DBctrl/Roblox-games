@@ -1,7 +1,8 @@
 # Architecture: "Aura Up!" (working title) v1
-_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1.4, 2026-10-31
+_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1.5, 2026-10-31
 (D-017, updated for GDD rev 1 / option A in D-023, sprint-1 contract requests in D-032, sprint-2 contract requests
-in D-051, ProductCatalog in D-054). Built from docs/gdd.md rev 1, approved by the owner (D-021).
+in D-051, ProductCatalog in D-054, sprint-3 contract requests and T-071 listing text in D-069). Built from
+docs/gdd.md rev 1, approved by the owner (D-021); GDD rev 3 moves the Galaxy Egg to World 1 (D-057, D-058).
 Source of truth for code contracts: `src/shared/Contracts/Remotes.luau` and `src/shared/Contracts/Types.luau`.
 Both must match this file. Applies lawyer rulings D-016 and D-019 (policy gate on Robux eggs only, next-tier-only
 ladder, restricted receipts). Prices were approved by the owner in D-038; they live only in
@@ -74,6 +75,12 @@ Upward calls are done by **inversion**, never by requiring up:
   module requires up at load time (no require cycle) and Init never calls another service. The other half of the
   rule: **PetService must call `MultiplierService.refresh(player)` after every equip, unequip or delete** (4a), so
   M is never stale. No other upward lookup is allowed without a Contract request.
+- **Sprint 3 (CR-G4, D-069; systems fix, the merge still reads `data.boosts.hypeSec`): Data -> Gameplay read for
+  the Hype cap.** MonetizationService's `RequestPurchase` gate
+  reads `MultiplierService.getBoostSec(player, "Hype")` (live seconds left) through a call-time lookup of
+  `ServerScriptService.Server.Gameplay.MultiplierService` inside the handler (never at file top, never in Init),
+  nil-guarded, falling back to `data.boosts.hypeSec`. Read-only and yield-free, so no require cycle. This is the only
+  Data -> Gameplay read; everything else goes through `registerGrant`.
 
 ### 1b. Server services
 | # | Module | Owner | Folder | Responsibility |
@@ -110,6 +117,17 @@ function MonetizationService.registerGrant(kind: T.GrantKind,
 function MonetizationService.getPaidTier(player: Player): number      -- 0..5 (0 = none, 5 = x32)
 function MonetizationService.hasVip(player: Player): boolean
 function MonetizationService.owns(player: Player, key: T.ProductKey): boolean -- permanent entitlements only
+-- Test seams (QA-F9, accepted D-069; qa only, never called by game code). **Not in the sprint-3 merge: systems fix.**
+function MonetizationService.processReceipt(receiptInfo: { [string]: any }): Enum.ProductPurchaseDecision
+	-- the exact fn assigned to MarketplaceService.ProcessReceipt (**yields**)
+function MonetizationService.grantEntry(player: Player, entry: ProductCatalog.Entry, purchaseId: string)
+	: Enum.ProductPurchaseDecision -- 3c steps 2, 4, 5 for a catalog entry, so tests run while ids are 0 (**yields**)
+function MonetizationService.getGrant(kind: T.GrantKind): GrantFn? -- read-only view of the registry
+-- Grant fn shape (all kinds): `GrantFn = (player: Player, key: T.ProductKey, data: T.ProfileData) -> boolean`.
+-- Registered in Start(): PaidTier + Boost by MultiplierService, FixedPet + StarterPack + RobuxEgg by PetService,
+-- Entitlement + Donation by MonetizationService itself. The fn runs on a deep copy of the profile (D-066), so it
+-- must have no side effect that assumes the grant is kept: attributes, Notify, HatchResult and telemetry are
+-- deferred (`task.defer`) or done by MonetizationService after the commit (section 5).
 
 -- ComplianceService
 function ComplianceService.paidRandomAllowed(player: Player): boolean -- false until checked (fail closed)
@@ -127,10 +145,18 @@ function ZoneService.getWorld(player: Player): T.WorldId
 function ZoneService.getPod(player: Player): number
 function ZoneService.isNearBoss(player: Player, bossId: string): boolean      -- <= EconomyConfig.INTERACT_RANGE
 function ZoneService.isNearEggStand(player: Player, eggId: T.EggId): boolean
+-- Mog rings (T-059, CR-W3 accepted D-069; behaviour in D-061). World 1 only in lean v1, 2 rings that run at once.
 function ZoneService.reserveRing(worldId: T.WorldId): number?                 -- ring index or nil if both busy
-function ZoneService.releaseRing(worldId: T.WorldId, ringIndex: number): ()
-function ZoneService.teleportToRing(player: Player, worldId: T.WorldId, ringIndex: number, side: 1 | 2): ()
+function ZoneService.releaseRing(worldId: T.WorldId, ringIndex: number): ()  -- idempotent; frees the whole ring
+	-- DuelService calls it exactly once per reservation, in `finish`; a leaving occupant frees the ring too
+function ZoneService.teleportToRing(player: Player, worldId: T.WorldId, ringIndex: number, side: number): ()
+	-- side 1 or 2 (typed `number`; any other value is ignored). Places the duelist on Side1/Side2 facing the other
+	-- pad and sets CharacterService lock reason "DuelRing" (cleared by releaseRing). 0.5 s server leash snaps an
+	-- occupant who leaves the ring area back to its pad.
 function ZoneService.getRingKnockback(worldId: T.WorldId, ringIndex: number): Vector3 -- unit vector to foam pit
+function ZoneService.isInRing(player: Player, worldId: T.WorldId, ringIndex: number): boolean
+	-- membership check for knockback gating: ring Model box incl. pit + RING_AREA_PAD (4) studs, +20 vertical;
+	-- fallback RING_FALLBACK_RADIUS (28) around MapLayout's centre when the map is not there
 function ZoneService.teleportToWorld(player: Player, worldId: T.WorldId): boolean -- checks unlock
 -- Added in sprint 1 (world request, accepted D-032). Safe with untrusted input (nil on bad ids).
 function ZoneService.getBossWorld(bossId: string): T.WorldId?             -- from MapLayout.BOSS_IDS
@@ -166,6 +192,9 @@ function MultiplierService.getMpMultiplier(player: Player): number    -- M, clam
 function MultiplierService.getCoinMultiplier(player: Player): number
 function MultiplierService.refresh(player: Player): ()
 function MultiplierService.addBoost(player: Player, kind: T.BoostKind, seconds: number): () -- caps at 2 h
+function MultiplierService.getBoostSec(player: Player, kind: T.BoostKind): number -- live seconds left (CR-G4)
+	-- feeds MonetizationService's 2 h Hype cap prompt gate (1a); 0 when not loaded
+MultiplierService.grants: { PaidTier: GrantFn, Boost: GrantFn } -- frozen; the fns it registers (qa 8g test seam)
 
 -- RankService
 RankService.RankUp: RBXScriptSignal -- (player: Player, rank: number)
@@ -193,7 +222,12 @@ function PetService.freeSlots(player: Player): number -- inventory space left
 -- "BadArgs", "NotOwned", "NoSlot".
 function PetService.setEquipped(player: Player, petUid: string, equip: boolean): (boolean, string?) -- no-op = true
 function PetService.deletePets(player: Player, petUids: { string }): (boolean, string?) -- 1..60 unique owned uids
--- grantEgg: coin eggs only until T-073 (S3) adds Robux rolls, pity and restrictedGrant.
+-- grantEgg: coin eggs only (Day-4 free hatch). Robux eggs are rolled only by the RobuxEgg grant (T-073).
+PetService.grants: { FixedPet: GrantFn, StarterPack: GrantFn, RobuxEgg: GrantFn } -- read-only qa 8g test seam
+	-- (gameplay fix: `table.freeze` it, as MultiplierService.grants already is)
+-- RobuxEgg (T-073): allowed players get `entry.count` rolls in order through `PetRoll.pickWithPity` with the saved
+-- counter (true odds = `EconomyConfig.nextHatchOdds`); restricted players get `ProductCatalog.restrictedGrant`
+-- (no roll, pity unchanged). StarterPack: a repeat receipt grants the contents again (owner D-060).
 
 -- BossService
 BossService.BossWon: RBXScriptSignal -- (player: Player, bossId: string, coins: number, auto: boolean)
@@ -213,12 +247,24 @@ function RebirthService.getCost(player: Player): number
 
 -- IdleService: no public functions. One 1 Hz loop (D-042): pod MP via ZoneService.getPod + PodsMask, Auto-Tap via
 -- TapService.addTaps(.., "Auto"), Auto-Mog via BossService.bestBeatable + tryFight(.., true) every 5 s while Idle.
--- DuelService
+-- DuelService (CR-G5, accepted D-069). Each remote handler calls exactly one of these after its own type checks
+-- (QA-F13), so qa drives the real path. Reasons: "NotLoaded", "BadArgs", "Self", "Tutorial", "TargetOff",
+-- "Blocked", "Muted", "Busy", "PendingOut", "Cooldown", "NoRing", "NoPending", "NoWindow", "Left", "Full".
 function DuelService.isInDuel(player: Player): boolean
+function DuelService.challenge(challenger: Player, targetUserId: number): (boolean, string?)   -- DuelChallenge
+function DuelService.respond(target: Player, challengerUserId: number, accept: boolean): (boolean, string?) -- DuelRespond
+function DuelService.rematch(player: Player, accept: boolean): (boolean, string?)              -- DuelRematch
+function DuelService.setBlock(player: Player, targetUserId: number, blocked: boolean): (boolean, string?) -- SetDuelBlock
+-- Pure helpers (gameplay-internal, server-only; qa may require them): `Gameplay/Util/DuelMath` (newTapState,
+-- acceptTaps(state, count, now, activeStart, activeEnd), decide, pruneRewardLog, rewardAllowed(log, now, opp),
+-- rewardCoins, weekId) and `Gameplay/Util/DailyMath` (utcDay, dayStart, claim(lastClaimDay, streak, today),
+-- shownStreak). These names are canonical (QA-F13 asked for `DuelRules` / `DailyCalendar`; see section 8).
 -- QuestService
 QuestService.TutorialCompleted: RBXScriptSignal -- (player: Player)
 function QuestService.isTutorialDone(player: Player): boolean
--- RewardService: no public functions.
+-- RewardService (CR-G5, accepted D-069)
+function RewardService.claim(player: Player): (boolean, string?) -- ClaimDailyReward; "NotLoaded" | "AlreadyClaimed" | "NoSlot"
+	-- RedeemCode has no server handler in v1 (codes are T-074, Update 2; D-064 #6). The remote stays declared.
 -- LeaderboardService: no public functions.
 ```
 
@@ -285,7 +331,8 @@ EconomyConfig.BOSSES: { Boss }           -- ARRAY, weakest first; W1 = 1..7, W2 
 EconomyConfig.BOSS_BY_ID: { [string]: Boss } -- same rows keyed by id (use this for lookups by id)
 EconomyConfig.RANKS: { Rank }            -- array, index = rank 1..12
 EconomyConfig.EGGS: { [T.EggId]: Egg }   -- map by egg id: BasicEgg, ShinyEgg (coins, W1), StarEgg (Robux, W1),
-                                         -- GalaxyEgg (Robux, W2); NeonEgg/RunwayEgg wait for T-090
+                                         -- GalaxyEgg (Robux, **W1** since GDD rev 3, D-057/D-058; was W2);
+                                         -- NeonEgg/RunwayEgg wait for T-090
 EconomyConfig.PETS: { [T.PetId]: Pet }   -- map by pet id (ids <= 32 chars)
 EconomyConfig.EGG_IDS: { T.EggId }       -- display order of the eggs in EGGS (each exactly once)
 EconomyConfig.RARITIES: { T.Rarity }     -- "Common" .. "Mythic", low to high
@@ -323,6 +370,25 @@ function EconomyConfig.duelScore(taps: number, ownRank: number, oppRank: number)
 function EconomyConfig.rankForLifetimeMp(lifetimeMp: number): number   -- 1..12
 function EconomyConfig.bossCoinsPerSec(boss: Boss, rebirths: number): number -- coins x coinRebirthMult / cycle
 function EconomyConfig.validate(): () -- asserts table shapes and egg weight sums; BossService.Init + qa tests
+-- Sprint 3 (CR-G5, accepted D-069). Pure; server and UI both read these, so the odds shown are the odds used.
+function EconomyConfig.pityOdds(egg: Egg): { EggPet }      -- the forced pity rows: the egg's Legendary pet at
+	-- PITY_LEGENDARY_WEIGHT and Mythic pet at PITY_MYTHIC_WEIGHT (validate() asserts one of each on Robux eggs)
+function EconomyConfig.nextHatchOdds(egg: Egg, pity: number): { EggPet } -- pityOdds when pity >= pityAt - 1,
+	-- else egg.pets; coin eggs always egg.pets. PetRoll.pickWithPity rolls from it; the Robux egg UI shows it
+function EconomyConfig.isPityHit(rarity: string): boolean  -- Legendary or Mythic (resets the counter)
+export type DailyReward = { coinSec: number?, hypeSec: number?, coinSnackSec: number?, freeHatch: boolean?,
+	cosmetic: string? }
+EconomyConfig.DAILY_REWARDS: { DailyReward }  -- 7 rows, GDD 10 (D7 cosmetic "WeekStreakAura"); free only
+EconomyConfig.DAILY_VIP_HYPE_SEC: number       -- 600, VIP's only daily extra (Hype Snack time)
+EconomyConfig.DAY_SEC: number                  -- 86400, UTC day for the calendar
+export type QuestStep = { text: string, bossWins: number?, toolIndex: number?, beatBoss: string?,
+	podIndex: number?, rank: number?, hatch: boolean? }    -- exactly one goal field per row
+EconomyConfig.QUEST_STEPS: { QuestStep }       -- 7 tutorial steps (GDD 9)
+-- Duel (GDD 6, 4c): DUEL_TAP_CAP_PER_SEC 10, DUEL_ACTIVE_SEC 8, DUEL_COUNTDOWN_SEC 3, DUEL_PENDING_SEC 10,
+-- DUEL_RESULT_SEC 2.5, DUEL_REMATCH_SEC 10, DUEL_GRACE_SEC 0.5, DUEL_RANK_STEP 0.03, DUEL_RANK_EDGE 2,
+-- DUEL_REWARD_BOSS_SEC 120, DUEL_REWARDS_PER_HOUR 5, DUEL_REWARDS_PER_OPPONENT 2, DUEL_OPPONENT_WINDOW_SEC 900,
+-- DUEL_REWARD_WINDOW_SEC 3600, DUEL_TAP_TOTAL_MAX 80, DUEL_TAP_BURST_SEC 1, DUEL_CHALLENGE_COOLDOWN_SEC 15,
+-- DUEL_DECLINE_MUTE_COUNT 3, DUEL_MUTE_SEC 600, DUEL_BLOCK_MAX 50. `duelScore` (above) uses only taps and ranks.
 ```
 **Two boss-id lists must agree:** `EconomyConfig.BOSSES` (ids + `world`) is the source of truth for gameplay and
 UI; `MapLayout.BOSS_IDS` (per world, same order) is World's copy for the map fallback. qa adds a test that they
@@ -336,8 +402,8 @@ are equal (checked equal at the sprint-1 merge).
 | 27 | ShopController | systems | `src/client/UI` | Tools, pods, Robux shop (fires `BuyTool`, `BuyPod`, `RequestPurchase`); shows only ladder tier `PaidTier + 1`, with "Does not stack: the highest tier you own applies" (D-008, D-016 #8) |
 | 28 | EggController | systems | `src/client/UI` | Egg UI with exact odds, bonuses, "you own" ticks and pity counter before every purchase; hides Robux eggs when `PaidRandomAllowed` is false; `HatchEgg`, `HatchResult` |
 | 29 | PetsController | systems | `src/client/UI` | Inventory (60), equip/unequip/equip best (`EquipPet`), multi-delete (`DeletePets`) |
-| 30 | DuelController | systems | `src/client/UI` | Challenge button on players, accept/decline, countdown, tap-off HUD, result, rematch, block (`DuelChallenge`, `DuelRespond`, `DuelRematch`, `SetDuelBlock`, `DuelState`) |
-| 31 | RewardsController | systems | `src/client/UI` | Daily calendar (`ClaimDailyReward`), codes box (`RedeemCode`) |
+| 30 | DuelController | systems | `src/client/UI` | "Challenge to a Mog-Off" player list (Challenge / Block per player, D-067), accept/decline, countdown, tap-off HUD, result, rematch, block (`DuelChallenge`, `DuelRespond`, `DuelRematch`, `SetDuelBlock`, `DuelState`) |
+| 31 | RewardsController | systems | `src/client/UI` | Daily calendar (`ClaimDailyReward`; reads `DailyStreak`, `DailyClaimable`, `DailyNextClaimUnix`); no codes box in v1 (`RedeemCode` is T-074) |
 | 32 | SettingsController | systems | `src/client/UI` | Toggles (`SetSetting`) |
 | 33 | NotificationController | systems | `src/client/UI` | `Notify` toasts (max 3) and server banners |
 | 34 | EffectsController | physics | `src/client/Effects` | `PlayEffect` dispatch: tap sparkles (pooled), coin bursts, boss pose-off + boss ragdoll (local clone), purchase/donation effects |
@@ -390,8 +456,11 @@ attributes only (section 1f); no code writes map attributes.
 Look/pet/fit templates: builder puts them in `ReplicatedStorage.Assets.Pets` and `ServerStorage.Assets.Looks`
 (models named by pet id / look id). Logged in docs/asset-briefs/asset-log.md.
 **Look and fit names (world request CR-W2, D-051): the lists are `MapLayout.LOOK_IDS` (12 rank looks, must equal
-`EconomyConfig.RANKS[i].lookId` in order; checked equal at the sprint-2 merge) and `MapLayout.FIT_IDS` (5 fits, in
-wear priority: `GoldenGlowFit`, `NeonIconFit`, `VipSparkleAura`, `RookieShades`, `StarterFit`).** Each is a model
+`EconomyConfig.RANKS[i].lookId` in order; checked equal at the sprint-2 merge) and `MapLayout.FIT_IDS` (6 fits, in
+wear priority: `GoldenGlowFit`, `NeonIconFit`, `VipSparkleAura`, `RookieShades`, `WeekStreakAura`, `StarterFit`).**
+`WeekStreakAura` (CR-G7, D-069) is the Day-7 daily cosmetic (`entitlements.cosmetics.WeekStreakAura`, set by
+RewardService); CharacterService wears any FIT_IDS entry the profile's cosmetics own. **Required world fix:** add it
+to `MapLayout.FIT_IDS` (it is not there in the sprint-3 merge). Each is a model
 in `ServerStorage.Assets.Looks` holding `Accessory` children only (CharacterService ignores anything else). The
 names below are a copy for the builder; MapLayout wins if they ever differ.
 
@@ -402,6 +471,13 @@ names below are a copy for the builder; MapLayout wins if they ever differ.
 - Look ids (model names in `ServerStorage.Assets.Looks`, 12): `FreshSpawn`, `CombRookie`, `GlowStarter`,
   `DripApprentice`, `StyleScout`, `MainCharacter`, `Trendsetter`, `AuraFarmer`, `Icon`, `SpotlightLegend`,
   `StarMogger`, `SupremeMogger`.
+- Fit ids (same folder, 6): `GoldenGlowFit`, `NeonIconFit`, `VipSparkleAura`, `RookieShades`, **`WeekStreakAura`**
+  (new, sprint 3: one Accessory with a single ParticleEmitter aura, rate <= 20, section 7), `StarterFit`.
+- World 1 egg stands (`MapLayout.W1_EGG_IDS`, 4): `BasicEgg`, `ShinyEgg`, `StarEgg` and **`GalaxyEgg`** (moved from
+  World 2 by D-057/D-058: EggStand "GalaxyEggStand", `EggId = "GalaxyEgg"`, `WorldId = 1`, about (-90, 0, -15) next
+  to the Star Egg stand).
+- Mog rings (World 1, 2): `MogRing` models with `RingIndex` 1/2, `WorldId` 1 and children `Side1`, `Side2`, `Pit`,
+  centred near (60, 0, 70) and (110, 0, 70) (MapLayout fallback).
 - **ProximityPrompts on stands (CR-4 decision): builder creates them.** Each `ShopStand` and `EggStand` holds one
   `ProximityPrompt` as a descendant (ActionText "Open Shop" / "Open Egg", HoldDuration 0, MaxActivationDistance 10,
   RequiresLineOfSight off). No code creates or edits prompts. The client matches a triggered prompt by walking its
@@ -442,7 +518,8 @@ cleared on `PlayerRemoving`.
 | 20 | DuelState | S->C | `T.DuelStatePayload` | n/a | on phase change only, to the 1-2 duelists | UI/DuelController + Effects/RagdollController (DuelService) |
 
 `PlayEffect` ids: `BossWin` {userId, bossId, amount}, `RankUp` {userId, rank}, `Rebirth` {userId, rebirths},
-`DuelKnockback` {userId, direction} (loser only), `DuelBounce` {userId} (draw), `Purchase` {userId, productKey},
+`DuelKnockback` {userId, direction} (loser only; sent to both duelists **after** their `DuelState` Result, and only
+when `ZoneService.isInRing` says the loser is in the ring; D-062 #7, D-065), `DuelBounce` {userId} (draw), `Purchase` {userId, productKey},
 `Donation` {userId?, tier} (userId omitted if opted out), `DailyReward` {amount}.
 
 ## 3. Data schema and Data API (owned by systems-programmer)
@@ -500,15 +577,20 @@ Sprint 1 runs on the `LockedStore` UpdateAsync fallback until ProfileStore is in
 Saving: ProfileStore auto-save, on leave (`EndSession`), and on shutdown (ProfileStore's `BindToClose`).
 
 ### 3c. ProcessReceipt and receipt-id dedupe (MonetizationService, the only assigner of `ProcessReceipt`)
-1. Find the player by `receiptInfo.PlayerId`; if absent or profile not loaded -> `NotYetProcessed` (Roblox retries).
+Enum items are `Enum.ProductPurchaseDecision.NotProcessedYet` and `PurchaseGranted` (QA-F10: earlier versions of
+this section said "NotYetProcessed", which does not exist).
+1. Find the player by `receiptInfo.PlayerId`; if absent or profile not loaded -> `NotProcessedYet` (Roblox retries).
 2. If `PurchaseId` is in `profile.receipts` -> `PurchaseGranted` (already granted; idempotent).
 3. Look up the entry with `ProductCatalog.byProductId(receiptInfo.ProductId)`; nil (unknown id, or a key not on
-   sale) -> log + `NotYetProcessed`.
-4. In **one** `DataService.update`: call the registered grant fn for the key's `GrantKind` with that update's
-   `data` table, then append the PurchaseId (trim to 100). If the grant returns false, nothing is recorded and the
-   answer is `NotYetProcessed`. After the update, fire `EntitlementsChanged` so services refresh attributes.
+   sale) -> log + `NotProcessedYet`.
+4. In **one** `DataService.update`: call the registered grant fn for the key's `GrantKind` on a **deep copy** of
+   that update's `data` (D-066, fixes QA-F11); if it returns true, does not error or yield and leaves the GDD 8g
+   firewall fields (coins, toolIndex, podsMask, rebirths, world2Unlocked) unchanged, merge the copy back and append
+   the PurchaseId (trim to 100) in the same update (`Data/Util/PurchaseRules.applyGrant`). Otherwise nothing is
+   recorded and the answer is `NotProcessedYet`. After the update, fire `EntitlementsChanged` so services refresh
+   attributes, and log `LadderFallback` / `RestrictedEggGrant` when they apply (section 5).
 5. Wait for the profile save that contains that PurchaseId, then return `PurchaseGranted`. If the session ends
-   first -> `NotYetProcessed`.
+   first -> `NotProcessedYet`.
 Every valid paid receipt is delivered (D-016 #9): the FirstWin rule gates prompts, never receipts. A Robux-egg
 receipt for a player whose `PaidRandomAllowed` is false grants the egg's **disclosed non-random outcome**
 (`ProductCatalog.restrictedGrant(key)`: the fixed pet, x3 for a 3-pack, also stated in the product description; the
@@ -572,15 +654,23 @@ clients show the same clock.
   0.5 s grace]`, and the total is capped at `10 x 8 = 80`. No PvE MP is earned from duel taps.
 - **Score:** `EconomyConfig.duelScore(taps, ownRank, oppRank)` = taps x (1 + 0.03 x min(ownRank, oppRank + 2)).
   Pets, PaidTier, VIP, boosts and auto-tap are never read. Equal scores = draw.
-- **Result:** server picks the winner, sends `DuelState` Result, fires `PlayEffect DuelKnockback` with the ring's
-  pit direction. The loser's own client applies the ragdoll (it owns its character's physics), and CharacterService
-  keeps the movement lock for 2.5 s. The server never applies forces outside the ring and only to the two duelists.
+- **Result (order fixed, CR-P3 / D-062 #7):** server picks the winner, sends `DuelState` Result to both duelists
+  **first**, then fires `PlayEffect DuelKnockback` {userId = loser, direction = `ZoneService.getRingKnockback`} to
+  both, only if `ZoneService.isInRing(loser, worldId, ring)` is true (a draw sends `DuelBounce` per duelist instead).
+  `InDuel` stays true until Ended. The loser's own client applies the ragdoll (Effects/RagdollController, D-065: only
+  for the local user, only while `InDuel` or within 4 s of a Result, only inside a MogRing box, clamped launch, 2.5 s
+  recovery, no `SetNetworkOwner`). Movement stays locked through Result and the rematch window by two independent
+  reasons: DuelService's `"Duel"` and ZoneService's `"DuelRing"` (D-061). The server never applies forces.
 - **Rewards (server only):** +1 week win and `120 x BossService.bestCoinsPerSec(winner)` coins, only if the
   winner's `duel.rewardLog` has < 5 entries in the last hour and < 2 vs this opponent in the last 15 min. Losers
   lose nothing.
 - **Anti-grief:** 1 pending outgoing challenge; 15 s cooldown per target; 3 declines in a row from the same
   target -> challenger muted for that target for 10 min; session block list; Pending auto-declines at 10 s.
-- **Forfeit:** leaving, character death/removal, or teleport out = forfeit, no reward to anyone; ring released.
+- **Forfeit:** leaving, character death/removal, or teleport out during Countdown/Active = forfeit, no reward to
+  anyone; ring released once in `finish`. After Result a leave only closes the rematch window (D-062 #6).
+- **Caps as built (D-062):** a 10 s timeout counts as a decline for the mute; the tap clamp keeps at most
+  `DUEL_TAP_BURST_SEC` of unused allowance; ranks are snapshot at Countdown; every win adds `stats.duelWins`, only a
+  win under the caps adds a weekly win and coins; rematches use the same caps.
 - **Rematch:** both `DuelRematch(true)` within 10 s -> new Countdown in the same ring (ring kept reserved).
 
 ### 4d. PolicyService gate for Robux eggs (ComplianceService)
@@ -616,10 +706,10 @@ handed, synchronously; services refresh their attributes on `EntitlementsChanged
 | Products | GrantKind | Registered by | What the grant writes |
 |---|---|---|---|
 | MpX2, MpX4, MpX8, MpX16, MpX32 | PaidTier | MultiplierService | `ProductCatalog.ladderGrant(key, paidTier)`: next tier -> `entitlements.paidTier` = that tier; any other receipt (owned, lower or skip-ahead tier) -> Hype Snack time, 10 min per 2 R$, cap bypassed, logged, **never the next tier** (D-019 #3, part of T-053 per D-038) |
-| HypeSnack, SpeedSneakers | Boost | MultiplierService | `boosts.hypeSec` +600 / `boosts.speedSec` +1800; time past the 2 h cap is added, never dropped (D-019 #4) |
+| HypeSnack, SpeedSneakers | Boost | MultiplierService | `boosts.hypeSec` +600 / `boosts.speedSec` +1800; time past the 2 h cap is added, never dropped (D-019 #4). The cap is a prompt gate: `RequestPurchase` refuses when `MultiplierService.getBoostSec(player, "Hype") + 600 > BOOST_CAP_SEC` (1a, CR-G4) |
 | AutoClicker, Vip, GoldenGlowFit, NeonIconFit | Entitlement | MonetizationService | `entitlements.autoClicker` / `vip` / `cosmetics[key]` (Vip also sets `cosmetics.VipSparkleAura`) |
 | RingLightRetriever, NeonPup | FixedPet | PetService | one copy of that pet into `pets.inventory` (may exceed 60 by up to 6) |
-| StarterPack | StarterPack | PetService | Sparkle Pup into inventory + `boosts.hypeSec` +1800 + `cosmetics.RookieShades` + `entitlements.starterPack`. **No coins, no pod, no egg** |
+| StarterPack | StarterPack | PetService | Sparkle Pup into inventory + `boosts.hypeSec` +1800 + `cosmetics.RookieShades` + `entitlements.starterPack`. **No coins, no pod, no egg.** "Once" is a prompt gate; a repeat receipt grants the same contents again (owner D-060) |
 | StarEgg1/3, GalaxyEgg1/3 | RobuxEgg | PetService | server roll + pity; restricted players get `restrictedGrant` (Starlight Corgi / Nebula Fox, x3 for a 3-pack) |
 | Tip5, Tip25, Tip100, Tip500, Tip1000 | Donation | MonetizationService | `stats.robuxDonated`, banner + name-tag colour only |
 
@@ -669,6 +759,8 @@ export type RestrictedGrant = { petId: PetId, count: number }
 ProductCatalog.Entries: { [ProductKey]: Entry }          -- all 23, frozen
 ProductCatalog.OnSaleKeys: { ProductKey }                -- the 15 on sale, in Types.ProductKeys order (shop lists)
 ProductCatalog.HYPE_FALLBACK_SEC_PER_ROBUX = 300         -- 10 min per 2 R$ (D-019 #3)
+ProductCatalog.LADDER_NOTE: string   -- lawyer L-1..L-5 ladder text (T-071); the shop shows this, never a copy
+ProductCatalog.PITY_RULE: string     -- lawyer L-12 pity sentence; the Robux egg screen and confirmation show this
 ProductCatalog.LADDER_TIERS = 5
 function ProductCatalog.get(key: string): Entry?                       -- nil for any non-key string (raw client input)
 function ProductCatalog.byProductId(productId: number): Entry?         -- ProcessReceipt lookup; nil for 0 / unknown
@@ -692,8 +784,9 @@ function ProductCatalog.missingIds(): { ProductKey }                   -- on-sal
   `entry.count` times from `entry.eggId`, or, when `PaidRandomAllowed` is false, grants
   `restrictedGrant(key)` (Star Egg -> Starlight Corgi, Galaxy Egg -> Nebula Fox, a 3-pack gives 3 copies; no roll,
   pity unchanged).
-- UI (ShopController): `OnSaleKeys`, `entry.displayName`, `entry.priceLabel`, `entry.description`. Prices shown come
-  from here only. Never sends anything but the key.
+- UI (ShopController / Panels): `OnSaleKeys`, `entry.displayName`, `entry.priceLabel`, `entry.description`,
+  `LADDER_NOTE`, `PITY_RULE`. Prices and listing words shown come from here only, so the in-game text and the
+  Creator Hub listing match (lawyer T-071). Never sends anything but the key.
 - qa: the catalog asserts at load that it has exactly one entry per `Types.ProductKeys` key (23), that `onSale`
   matches a non-zero price, that all 5 ladder tiers exist and that filled-in ids are unique. qa adds: every
   `restrictedPetId` equals `EconomyConfig.EGGS[eggId].restrictedGrant`, and the 8g firewall walks all 23 entries.
@@ -707,23 +800,33 @@ secrets. Do **not** create Speed Sneakers, Neon Pup, Neon Icon Fit or any tip: t
 
 | # | Key | Name | Price (R$) | Description |
 |---|---|---|---|---|
-| 1 | MpX2 | x2 Mog Points | 4 | x2 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. |
-| 2 | MpX4 | x4 Mog Points | 8 | x4 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. |
-| 3 | MpX8 | x8 Mog Points | 19 | x8 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. |
-| 4 | MpX16 | x16 Mog Points | 39 | x16 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. |
-| 5 | MpX32 | x32 Mog Points | 79 | x32 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. |
-| 6 | HypeSnack | Hype Snack | 2 | x2 Mog Points for 10 minutes. Boost time runs only while you are in the game. Stacks up to 2 hours. |
-| 7 | AutoClicker | Auto Clicker | 39 | Permanent. 6 automatic taps per second for Mog Points. |
-| 8 | RingLightRetriever | Ring Light Retriever | 29 | One Ring Light Retriever pet (+1.00 Mog Points bonus). Not random. |
+| 1 | MpX2 | x2 Mog Points | 4 | x2 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. Works together with pets, VIP and Hype Snack. Only your next tier can be bought. If this tier can't be applied to you, you get Hype Snack time instead (10 min per 2 R$ paid). |
+| 2 | MpX4 | x4 Mog Points | 8 | x4 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. Works together with pets, VIP and Hype Snack. Only your next tier can be bought. If this tier can't be applied to you, you get Hype Snack time instead (10 min per 2 R$ paid). |
+| 3 | MpX8 | x8 Mog Points | 19 | x8 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. Works together with pets, VIP and Hype Snack. Only your next tier can be bought. If this tier can't be applied to you, you get Hype Snack time instead (10 min per 2 R$ paid). |
+| 4 | MpX16 | x16 Mog Points | 39 | x16 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. Works together with pets, VIP and Hype Snack. Only your next tier can be bought. If this tier can't be applied to you, you get Hype Snack time instead (10 min per 2 R$ paid). |
+| 5 | MpX32 | x32 Mog Points | 79 | x32 Mog Points from tapping, pods and auto taps. Permanent. Does not stack: the highest tier you own applies. Works together with pets, VIP and Hype Snack. Only your next tier can be bought. If this tier can't be applied to you, you get Hype Snack time instead (10 min per 2 R$ paid). |
+| 6 | HypeSnack | Hype Snack | 2 | x2 Mog Points for 10 minutes, on top of your tier, pets and VIP. Boost time runs only while you are in the game. Buy more to add time, up to 2 hours in total. |
+| 7 | AutoClicker | Auto Clicker | 39 | Permanent. 6 automatic taps per second for Mog Points (free players get 3 per second from Rank 3). Your own taps plus auto taps are capped at 12 per second. Auto taps pause in duels and when Auto-Tap is off in Settings. |
+| 8 | RingLightRetriever | Ring Light Retriever | 29 | One Ring Light Retriever pet: +1.00 MP bonus while equipped. Not random. Each purchase gives one more copy. |
 | 9 | GoldenGlowFit | Golden Glow Fit | 249 | Permanent. Exclusive outfit and aura. Cosmetic only, no stats. |
 | 10 | Vip | VIP | 99 | Permanent. x1.25 Mog Points, +1 pet slot, gold name tag, VIP Sparkle Aura and +10 min Hype Snack on each daily reward claim. |
-| 11 | StarterPack | Starter Pack | 9 | One time only. 30 min Hype Snack, Sparkle Pup pet (+0.30 Mog Points bonus) and Rookie Shades cosmetic. |
-| 12 | StarEgg1 | Star Egg | 25 | 1 Star Egg hatch. Odds are shown in game before you buy. Every 10th hatch with no Legendary or better is a guaranteed Legendary (90%) or Mythic (10%). If random items are not available on your account, you get Starlight Corgi (no random roll). |
-| 13 | StarEgg3 | Star Egg x3 | 69 | 3 Star Egg hatches. Odds are shown in game before you buy. Every 10th hatch with no Legendary or better is a guaranteed Legendary (90%) or Mythic (10%). If random items are not available on your account, you get 3 x Starlight Corgi (no random roll). |
-| 14 | GalaxyEgg1 | Galaxy Egg | 49 | 1 Galaxy Egg hatch. Odds are shown in game before you buy. Every 10th hatch with no Legendary or better is a guaranteed Legendary (90%) or Mythic (10%). If random items are not available on your account, you get Nebula Fox (no random roll). |
-| 15 | GalaxyEgg3 | Galaxy Egg x3 | 129 | 3 Galaxy Egg hatches. Odds are shown in game before you buy. Every 10th hatch with no Legendary or better is a guaranteed Legendary (90%) or Mythic (10%). If random items are not available on your account, you get 3 x Nebula Fox (no random roll). |
+| 11 | StarterPack | Starter Pack | 9 | One time only. 30 min Hype Snack (x2 Mog Points, in-game time), Sparkle Pup pet (+0.30 MP bonus while equipped) and Rookie Shades cosmetic. |
+| 12 | StarEgg1 | Star Egg | 25 | 1 Star Egg hatch. Odds for every pet are shown in game before you buy. Pity: if 9 hatches of this egg in a row give no Legendary or better, your next hatch is a guaranteed Legendary (90%) or Mythic (10%). Your pity count is saved. If random items are not available on your account, you get Starlight Corgi instead (no random roll). |
+| 13 | StarEgg3 | Star Egg x3 | 69 | 3 Star Egg hatches. Odds for every pet are shown in game before you buy. Each of the 3 hatches uses the same odds, and pity can trigger inside the pack. Pity: if 9 hatches of this egg in a row give no Legendary or better, your next hatch is a guaranteed Legendary (90%) or Mythic (10%). Your pity count is saved. If random items are not available on your account, you get 3 Starlight Corgi pets instead (no random roll). |
+| 14 | GalaxyEgg1 | Galaxy Egg | 49 | 1 Galaxy Egg hatch. Odds for every pet are shown in game before you buy. Pity: if 9 hatches of this egg in a row give no Legendary or better, your next hatch is a guaranteed Legendary (90%) or Mythic (10%). Your pity count is saved. If random items are not available on your account, you get Nebula Fox instead (no random roll). |
+| 15 | GalaxyEgg3 | Galaxy Egg x3 | 129 | 3 Galaxy Egg hatches. Odds for every pet are shown in game before you buy. Each of the 3 hatches uses the same odds, and pity can trigger inside the pack. Pity: if 9 hatches of this egg in a row give no Legendary or better, your next hatch is a guaranteed Legendary (90%) or Mythic (10%). Your pity count is saved. If random items are not available on your account, you get 3 Nebula Fox pets instead (no random roll). |
 
-Each description is the same text as the entry's `description` field in ProductCatalog. Before go-live, lawyer re-reads these texts against docs/legal.md (wording rules GDD 8e, 8h, 8i).
+Each description is the same text as the entry's `description` field in ProductCatalog. **Texts updated to the
+lawyer's T-071 listing review (docs/legal.md, L-1..L-13; sprint-3 merge, D-069):** ladder `LADDER_NOTE`, Hype Snack,
+Auto Clicker, Ring Light Retriever and Starter Pack ("MP bonus while equipped"), and the Robux egg pity and 3-pack
+sentences. Golden Glow Fit and VIP are unchanged (OK). The longest text (rows 13 and 15) is about 420 characters;
+`TODO(verify-api)`: Creator Hub's maximum description length was not checked.
+**Galaxy Egg (rows 14-15): create them today.** Lawyer blocker L-14 (Galaxy Egg in an unreachable World 2) is
+resolved by the owner's D-057: the Galaxy Egg is a World 1 egg (`EconomyConfig.EGGS.GalaxyEgg.world = 1`, GDD rev 3,
+D-058) with its own `GalaxyEgg` stand next to the Star Egg stand in Glow Town (`MapLayout` W1 egg stands), so its
+odds and pity UI are reachable before purchase. Odds, pity, the Nebula Fox fallback and the 49 / 129 R$ prices are
+unchanged (D-038). The lawyer's non-text conditions still apply at `/launch`: Robux eggs are prompted only from the
+egg UI or its confirmation step, and restricted players see no Robux egg buy button.
 
 ## 5. Analytics events (TelemetryService)
 `TODO(verify-api)`: confirm the Roblox `AnalyticsService` method names and parameters (`LogOnboardingFunnelStepEvent`,
@@ -733,7 +836,9 @@ Each description is the same text as the entry's `description` field in ProductC
 | Spawn, FirstTap, FirstWin, FirstUpgrade, FirstPod, FirstRankUp, FirstEgg, TutorialDone, FirstRebirth | onboarding funnel, once per profile (`milestones`) | the first time it happens | seconds since `firstJoinUnix` (also logged as custom `TimeTo<Step>`) |
 | Coins source | economy | BossWin, DuelReward, Daily, Code (never a Robux source, GDD 8g) | amount |
 | Coins sink | economy | Tool, Pod, Egg, Rebirth | amount |
-| Purchase | custom | each granted receipt (after dedupe) | Robux price; product key as event name suffix |
+| Purchase | custom | each granted receipt (after dedupe) | Robux price |
+| LadderFallback | custom | (systems fix: TelemetryService allow-list + emit) MonetizationService, after a committed PaidTier grant whose tier did not rise (D-019 #3 Hype fallback) | Robux price |
+| RestrictedEggGrant | custom | (systems fix, as LadderFallback) MonetizationService, after a committed RobuxEgg grant for a player whose `PaidRandomAllowed` is false | Robux price |
 | DuelPlayed / DuelWon / DuelDraw / DuelForfeit | custom | duel end | duel seconds |
 | SessionLength | custom | `PlayerRemoving` | seconds |
 | RankUp / Rebirth | progression | each | new rank / rebirth count |
@@ -795,6 +900,15 @@ client UI `EggController`, `PetsController`, `SettingsController`, Effects `PetF
 `CinematicController`. `QuestService`, `DuelService`, `RewardService`, `MonetizationService`, `LeaderboardService`,
 `RewardsController`, `DuelController` and `RagdollController` are still skipped (sprint 3).
 
+### Sprint-3 integration (T-072, D-069)
+Both bootstraps already listed every sprint-3 module (sprint-1 T-026), so no order change was needed: server Data
+`MonetizationService`, Gameplay `DuelService`, `QuestService`, `RewardService` (L3); client UI `RewardsController`,
+`DuelController`, Effects `RagdollController`. New helpers are not bootstrapped: `Data/Util/PurchaseRules`,
+`Gameplay/Util/DuelMath`, `Gameplay/Util/DailyMath`, and `UI/Panels/RobuxShopPanel` (started by ShopController),
+`UI/Panels/RobuxEggPanel` (started by EggController). `LeaderboardService` is still not written (skipped).
+Grants are registered in `Start()` through `Deps.registerGrant`; MonetizationService's `Init()` creates the registry
+and `EntitlementsChanged`, so every Gameplay Start finds it.
+
 ### Wally packages
 | Package | Realm | Use | Why |
 |---|---|---|---|
@@ -845,3 +959,14 @@ Programmers add requests through their summary; team-lead routes them here. inte
 | CR-S2c | systems (T-034) | Attribute names `AutoTapUnlocked` / `AutoMogUnlocked`, written by IdleService | **Accepted** (D-051). Both in `Types.PlayerAttr`, writer IdleService (1e); SetSetting already reads them (QA-3) |
 | CR-T069 | integration (T-069, D-038) | Trim the 8 out-of-scope keys from `T.ProductKey`, or keep them | **Decided** (D-054): keep all 23 keys; the 8 have `onSale = false` in ProductCatalog. No type change, so no rename across folders. Notified: gameplay (T-053 uses `canSell`, `byProductId`, `ladderGrant`, `restrictedGrant`), systems (shop lists `OnSaleKeys`), qa (checks in 4f) |
 | CR-S2d | systems (T-033) | Telemetry hooks: `Deps.funnel` / `Deps.economy` calls from Gameplay | **Accepted and verified** (D-051): every step and coin flow in section 5 "Who calls what" is called in the merged code; nothing missing for sprint 2 |
+| CR-G3 | gameplay (T-053, T-073) | `registerGrant` fn shape `(player, key, data) -> boolean` for PaidTier, Boost, FixedPet, StarterPack, RobuxEgg; list `MultiplierService.grants` and `PetService.grants` | **Accepted** (D-069). Shape is `Deps.GrantFn` = `PurchaseRules.GrantFn`, matches `MonetizationService.registerGrant`; registered through `Deps.registerGrant` in Start. Listed in 1b. Verified in the merge: all 5 kinds registered once (check_grants grant-kinds); Entitlement and Donation are set by MonetizationService in Init (the static check reports them PENDING because it only sees `registerGrant` calls) |
+| CR-G4 | gameplay (T-053) | `MultiplierService.getBoostSec(player, kind)` feeds the 2 h Hype cap | **Accepted** (D-069) as a call-time Data -> Gameplay read (1a). **Open: systems fix** (MonetizationService/PurchaseRules still use `data.boosts.hypeSec`, which lags while Hype runs) |
+| CR-G5 | gameplay (T-049, T-050, T-052, T-032, T-073) | DuelService `challenge` / `respond` / `rematch` / `setBlock`, `RewardService.claim`; EconomyConfig `pityOdds`, `nextHatchOdds`, `isPityHit`, `DAILY_*`, `QUEST_STEPS`, `DUEL_*`, `DAY_SEC` | **Accepted** (D-069), as merged. Listed in 1b and 1c. The Robux egg UI must use `nextHatchOdds` / `pityOdds` (systems fix; it recomputes them today, same numbers) |
+| CR-G6 | gameplay (T-053, T-073) | CustomEvents `LadderFallback`, `RestrictedEggGrant` | **Accepted** (D-069), added to `T.CustomEvent`. Emitted by MonetizationService after the commit, not by the grant fns (they run on a copy that may be dropped). **Open: systems fix** (TelemetryService allow-list + emit) |
+| CR-G7 | gameplay (T-052) | A look model for the Day-7 `WeekStreakAura` cosmetic | **Accepted** (D-069): fit id `WeekStreakAura` in the 1f builder handoff. **Open: world fix** (add it to `MapLayout.FIT_IDS`) and gameplay fix (re-apply looks after the Day-7 claim) |
+| CR-W3 | world (T-059) | Ring API: `isInRing`, `getRingKnockback`, `reserveRing`, `teleportToRing` with `side: number`; own `"DuelRing"` lock | **Accepted** (D-069, behaviour D-061). Listed in 1b. DuelService calls reserveRing, teleportToRing, getRingKnockback, isInRing, releaseRing (once, in `finish`) with the merged names |
+| CR-P3 | physics (T-066) | `DuelState` Result before `PlayEffect DuelKnockback`; knockback only for a loser in the ring | **Accepted and verified** (D-069): DuelService `showResult` sends Result to both, then the effect, gated by `isInRing` (D-062 #7). Documented in 2 and 4c |
+| CR-L1 | lawyer (T-071, D-056) | New listing text for ladder, Hype Snack, Auto Clicker, Ring Light Retriever, Starter Pack, Robux eggs | **Done** (D-069): exact strings in `ProductCatalog` (`LADDER_NOTE`, `PITY_RULE` exported) and the 4f checklist. Galaxy Egg rows 14-15 are created today (L-14 resolved by D-057). **Open: systems fix** (RobuxShopPanel and RobuxEggPanel keep old local copies of the ladder note and pity rule) |
+| QA-F9 | qa (T-081) via systems | MonetizationService test seams `processReceipt`, `grantEntry`, `getGrant` | **Accepted** (D-069), listed in 1b. **Open: systems fix** |
+| QA-F10 | qa (T-081) | 3c says `NotYetProcessed` | **Done** (D-069): 3c now says `NotProcessedYet`; code already used the right item |
+| QA-F13 | qa (T-068) | Pure duel/daily helpers and public duel/reward entries | **Decided** (D-069): the merged names are canonical: `Util/DuelMath` (not DuelRules), `Util/DailyMath` (not DailyCalendar), `RewardService.claim` (not claimDaily); `DuelService.challenge` / `respond` / `rematch` match. **Open: qa fix** (retarget the probes; `DuelMath.acceptTaps` takes a TapState and `DailyMath.claim(lastClaimDay, streak, today)` returns (ok, newStreak), so those specs need new adapters) |

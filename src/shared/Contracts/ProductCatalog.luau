@@ -55,8 +55,16 @@ ProductCatalog.HYPE_FALLBACK_SEC_PER_ROBUX = 300
 ProductCatalog.LADDER_TIERS = 5
 ProductCatalog.PLACEHOLDER_ID = 0
 
-local LADDER_NOTE = "Permanent. Does not stack: the highest tier you own applies."
-local BOOST_NOTE = "Boost time runs only while you are in the game. Stacks up to 2 hours."
+-- Listing text: lawyer T-071 listing review (docs/legal.md, L-1..L-13, D-056). Exact strings; do not reword.
+-- LADDER_NOTE and PITY_RULE are exported so the shop and Robux egg UI show the same words as the listing.
+local LADDER_NOTE = "Permanent. Does not stack: the highest tier you own applies. Works together with pets, VIP and "
+	.. "Hype Snack. Only your next tier can be bought. If this tier can't be applied to you, you get Hype Snack time "
+	.. "instead (10 min per 2 R$ paid)."
+local PITY_RULE = "Pity: if 9 hatches of this egg in a row give no Legendary or better, your next hatch is a "
+	.. "guaranteed Legendary (90%) or Mythic (10%). Your pity count is saved."
+local PACK_LINE = "Each of the 3 hatches uses the same odds, and pity can trigger inside the pack. "
+ProductCatalog.LADDER_NOTE = LADDER_NOTE
+ProductCatalog.PITY_RULE = PITY_RULE
 
 local function entry(e: Entry): Entry
 	return table.freeze(e)
@@ -90,7 +98,8 @@ local function robuxEgg(
 	petName: string
 ): Entry
 	local what = if count == 1 then `1 {eggName} hatch` else `{count} {eggName} hatches`
-	local fallback = if count == 1 then petName else `{count} x {petName}`
+	local fallback = if count == 1 then petName else `{count} {petName} pets`
+	local packLine = if count == 1 then "" else PACK_LINE
 	return entry({
 		key = key,
 		productId = 0, -- TODO(owner): paste the Creator Hub id
@@ -104,9 +113,8 @@ local function robuxEgg(
 		count = count,
 		restrictedPetId = petId,
 		displayName = if count == 1 then eggName else `{eggName} x{count}`,
-		description = `{what}. Odds are shown in game before you buy. Every 10th hatch with no Legendary or better `
-			.. `is a guaranteed Legendary (90%) or Mythic (10%). If random items are not available on your `
-			.. `account, you get {fallback} (no random roll).`,
+		description = `{what}. Odds for every pet are shown in game before you buy. {packLine}{PITY_RULE} If random `
+			.. `items are not available on your account, you get {fallback} instead (no random roll).`,
 	})
 end
 
@@ -144,7 +152,8 @@ local entries: { [ProductKey]: Entry } = {
 		nextTierOnly = false,
 		hypeSec = 600,
 		displayName = "Hype Snack",
-		description = `x2 Mog Points for 10 minutes. {BOOST_NOTE}`,
+		description = "x2 Mog Points for 10 minutes, on top of your tier, pets and VIP. Boost time runs only while "
+			.. "you are in the game. Buy more to add time, up to 2 hours in total.",
 	}),
 	SpeedSneakers = notOnSale("SpeedSneakers", "Boost", "Speed Sneakers"),
 
@@ -158,7 +167,9 @@ local entries: { [ProductKey]: Entry } = {
 		repeatable = false,
 		nextTierOnly = false,
 		displayName = "Auto Clicker",
-		description = "Permanent. 6 automatic taps per second for Mog Points.",
+		description = "Permanent. 6 automatic taps per second for Mog Points (free players get 3 per second from "
+			.. "Rank 3). Your own taps plus auto taps are capped at 12 per second. Auto taps pause in duels and when "
+			.. "Auto-Tap is off in Settings.",
 	}),
 
 	RingLightRetriever = entry({
@@ -172,7 +183,8 @@ local entries: { [ProductKey]: Entry } = {
 		nextTierOnly = false,
 		petId = "RingLightRetriever",
 		displayName = "Ring Light Retriever",
-		description = "One Ring Light Retriever pet (+1.00 Mog Points bonus). Not random.",
+		description = "One Ring Light Retriever pet: +1.00 MP bonus while equipped. Not random. Each purchase gives "
+			.. "one more copy.",
 	}),
 	NeonPup = notOnSale("NeonPup", "FixedPet", "Neon Pup"),
 
@@ -216,8 +228,8 @@ local entries: { [ProductKey]: Entry } = {
 		hypeSec = 1800,
 		petId = "SparklePup",
 		displayName = "Starter Pack",
-		description = "One time only. 30 min Hype Snack, Sparkle Pup pet (+0.30 Mog Points bonus) and Rookie "
-			.. "Shades cosmetic.",
+		description = "One time only. 30 min Hype Snack (x2 Mog Points, in-game time), Sparkle Pup pet (+0.30 MP "
+			.. "bonus while equipped) and Rookie Shades cosmetic.",
 	}),
 
 	-- Robux eggs, policy-gated (4d); restricted receipts grant the fixed pet, 3 copies for a 3-pack (GDD 5)

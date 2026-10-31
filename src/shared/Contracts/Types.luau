@@ -105,7 +105,17 @@ export type FunnelStep =
 	| "TutorialDone"
 	| "FirstRebirth"
 
-export type CustomEvent = "Purchase" | "DuelPlayed" | "DuelWon" | "DuelDraw" | "DuelForfeit" | "SessionLength"
+export type CustomEvent =
+	"Purchase"
+	| "DuelPlayed"
+	| "DuelWon"
+	| "DuelDraw"
+	| "DuelForfeit"
+	| "SessionLength"
+	-- Sprint 3 (CR-G6, D-069). Logged by MonetizationService only, after the grant is committed (never from inside
+	-- a grant fn, which runs on a copy that may be dropped). Value = the receipt's catalog price in R$.
+	| "LadderFallback" -- a ladder receipt that was not for the next tier, granted as Hype Snack time (D-019 #3)
+	| "RestrictedEggGrant" -- a Robux egg receipt for a restricted account, granted as the fixed pet (D-016 #4)
 
 export type LeaderboardId = "LifetimeMp" | "Rebirths" | "DuelWinsWeek" | "Donors"
 
@@ -134,7 +144,7 @@ export type ProfileData = {
 		vip: boolean,
 		autoClicker: boolean,
 		starterPack: boolean,
-		cosmetics: { [string]: boolean }, -- GoldenGlowFit, NeonIconFit, RookieShades, VipSparkleAura, ...
+		cosmetics: { [string]: boolean }, -- GoldenGlowFit, NeonIconFit, RookieShades, VipSparkleAura, WeekStreakAura
 	},
 	boosts: { hypeSec: number, coinSec: number, speedSec: number }, -- remaining seconds, online only
 	daily: { streak: number, lastClaimDay: number }, -- lastClaimDay = UTC days since epoch, 0 = never
