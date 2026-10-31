@@ -6,7 +6,7 @@
 -- banner (`DuelState` Result). It never sends a remote and never decides anything: the server picks the
 -- winner, the loser, the score and the rewards (architecture 4c); this module only draws what it is told.
 --
--- Network ownership (decision D-053):
+-- Network ownership (decision D-065):
 -- - Nothing here calls SetNetworkOwner (server-only API) and nothing asks the server to change ownership.
 -- - The only physics this module touches is the LOCAL player's own character, which Roblox already gives to
 --   that player's client by default. Its velocity/joint changes replicate the way normal walking does.
