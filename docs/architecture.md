@@ -1,7 +1,7 @@
 # Architecture: "Aura Up!" (working title) v1
-_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1.5, 2026-10-31
+_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1.6, 2026-10-31
 (D-017, updated for GDD rev 1 / option A in D-023, sprint-1 contract requests in D-032, sprint-2 contract requests
-in D-051, ProductCatalog in D-054, sprint-3 contract requests and T-071 listing text in D-069). Built from
+in D-051, ProductCatalog in D-054, sprint-3 contract requests and T-071 listing text in D-069, post-commit grant hook in D-071). Built from
 docs/gdd.md rev 1, approved by the owner (D-021); GDD rev 3 moves the Galaxy Egg to World 1 (D-057, D-058).
 Source of truth for code contracts: `src/shared/Contracts/Remotes.luau` and `src/shared/Contracts/Types.luau`.
 Both must match this file. Applies lawyer rulings D-016 and D-019 (policy gate on Robux eggs only, next-tier-only
@@ -123,7 +123,8 @@ function MonetizationService.processReceipt(receiptInfo: { [string]: any }): Enu
 function MonetizationService.grantEntry(player: Player, entry: ProductCatalog.Entry, purchaseId: string)
 	: Enum.ProductPurchaseDecision -- 3c steps 2, 4, 5 for a catalog entry, so tests run while ids are 0 (**yields**)
 function MonetizationService.getGrant(kind: T.GrantKind): GrantFn? -- read-only view of the registry
--- Grant fn shape (all kinds): `GrantFn = (player: Player, key: T.ProductKey, data: T.ProfileData) -> boolean`.
+-- Grant fn shape (all kinds, D-071): `GrantFn = (player, key, data) -> (boolean, OnCommitted?)`,
+-- `OnCommitted = (player: Player) -> ()`, run once after the save is confirmed (section 8 CR-I8).
 -- Registered in Start(): PaidTier + Boost by MultiplierService, FixedPet + StarterPack + RobuxEgg by PetService,
 -- Entitlement + Donation by MonetizationService itself. The fn runs on a deep copy of the profile (D-066), so it
 -- must have no side effect that assumes the grant is kept: attributes, Notify, HatchResult and telemetry are
@@ -589,8 +590,10 @@ this section said "NotYetProcessed", which does not exist).
    the PurchaseId (trim to 100) in the same update (`Data/Util/PurchaseRules.applyGrant`). Otherwise nothing is
    recorded and the answer is `NotProcessedYet`. After the update, fire `EntitlementsChanged` so services refresh
    attributes, and log `LadderFallback` / `RestrictedEggGrant` when they apply (section 5).
-5. Wait for the profile save that contains that PurchaseId, then return `PurchaseGranted`. If the session ends
-   first -> `NotProcessedYet`.
+5. Wait for the profile save that contains that PurchaseId, then run the grant's `onCommitted` hook (section 8
+   CR-I8, D-071), then return `PurchaseGranted`. If the session ends first -> `NotProcessedYet` and the hook never
+   runs. A retry that lands on step 2 (id already in the profile) and confirms the save runs the hook that is still
+   pending for that PurchaseId in this server, once.
 Every valid paid receipt is delivered (D-016 #9): the FirstWin rule gates prompts, never receipts. A Robux-egg
 receipt for a player whose `PaidRandomAllowed` is false grants the egg's **disclosed non-random outcome**
 (`ProductCatalog.restrictedGrant(key)`: the fixed pet, x3 for a 3-pack, also stated in the product description; the
@@ -702,7 +705,9 @@ bypassed by a modified client. The client never calls `PromptProductPurchase`. A
 products (`T.ProductKey`, listed in `Types.ProductKeys`); permanent ones are entitlements in the profile, re-applied on join.
 
 **Product -> grant kind -> registering service (option A, D-021).** Grant fns mutate only the `data` table they are
-handed, synchronously; services refresh their attributes on `EntitlementsChanged`.
+handed, synchronously; services refresh their attributes on `EntitlementsChanged`. A grant fn never talks to the
+client itself: anything the player sees (toasts, HatchResult, effects, `Hatched`/funnel counts) goes in the
+`onCommitted` hook it returns (section 8 CR-I8, D-071).
 | Products | GrantKind | Registered by | What the grant writes |
 |---|---|---|---|
 | MpX2, MpX4, MpX8, MpX16, MpX32 | PaidTier | MultiplierService | `ProductCatalog.ladderGrant(key, paidTier)`: next tier -> `entitlements.paidTier` = that tier; any other receipt (owned, lower or skip-ahead tier) -> Hype Snack time, 10 min per 2 R$, cap bypassed, logged, **never the next tier** (D-019 #3, part of T-053 per D-038) |
@@ -959,14 +964,43 @@ Programmers add requests through their summary; team-lead routes them here. inte
 | CR-S2c | systems (T-034) | Attribute names `AutoTapUnlocked` / `AutoMogUnlocked`, written by IdleService | **Accepted** (D-051). Both in `Types.PlayerAttr`, writer IdleService (1e); SetSetting already reads them (QA-3) |
 | CR-T069 | integration (T-069, D-038) | Trim the 8 out-of-scope keys from `T.ProductKey`, or keep them | **Decided** (D-054): keep all 23 keys; the 8 have `onSale = false` in ProductCatalog. No type change, so no rename across folders. Notified: gameplay (T-053 uses `canSell`, `byProductId`, `ladderGrant`, `restrictedGrant`), systems (shop lists `OnSaleKeys`), qa (checks in 4f) |
 | CR-S2d | systems (T-033) | Telemetry hooks: `Deps.funnel` / `Deps.economy` calls from Gameplay | **Accepted and verified** (D-051): every step and coin flow in section 5 "Who calls what" is called in the merged code; nothing missing for sprint 2 |
-| CR-G3 | gameplay (T-053, T-073) | `registerGrant` fn shape `(player, key, data) -> boolean` for PaidTier, Boost, FixedPet, StarterPack, RobuxEgg; list `MultiplierService.grants` and `PetService.grants` | **Accepted** (D-069). Shape is `Deps.GrantFn` = `PurchaseRules.GrantFn`, matches `MonetizationService.registerGrant`; registered through `Deps.registerGrant` in Start. Listed in 1b. Verified in the merge: all 5 kinds registered once (check_grants grant-kinds); Entitlement and Donation are set by MonetizationService in Init (the static check reports them PENDING because it only sees `registerGrant` calls) |
-| CR-G4 | gameplay (T-053) | `MultiplierService.getBoostSec(player, kind)` feeds the 2 h Hype cap | **Accepted** (D-069) as a call-time Data -> Gameplay read (1a). **Open: systems fix** (MonetizationService/PurchaseRules still use `data.boosts.hypeSec`, which lags while Hype runs) |
-| CR-G5 | gameplay (T-049, T-050, T-052, T-032, T-073) | DuelService `challenge` / `respond` / `rematch` / `setBlock`, `RewardService.claim`; EconomyConfig `pityOdds`, `nextHatchOdds`, `isPityHit`, `DAILY_*`, `QUEST_STEPS`, `DUEL_*`, `DAY_SEC` | **Accepted** (D-069), as merged. Listed in 1b and 1c. The Robux egg UI must use `nextHatchOdds` / `pityOdds` (systems fix; it recomputes them today, same numbers) |
-| CR-G6 | gameplay (T-053, T-073) | CustomEvents `LadderFallback`, `RestrictedEggGrant` | **Accepted** (D-069), added to `T.CustomEvent`. Emitted by MonetizationService after the commit, not by the grant fns (they run on a copy that may be dropped). **Open: systems fix** (TelemetryService allow-list + emit) |
-| CR-G7 | gameplay (T-052) | A look model for the Day-7 `WeekStreakAura` cosmetic | **Accepted** (D-069): fit id `WeekStreakAura` in the 1f builder handoff. **Open: world fix** (add it to `MapLayout.FIT_IDS`) and gameplay fix (re-apply looks after the Day-7 claim) |
+| CR-G3 | gameplay (T-053, T-073) | `registerGrant` fn shape `(player, key, data) -> boolean` for PaidTier, Boost, FixedPet, StarterPack, RobuxEgg; list `MultiplierService.grants` and `PetService.grants` | **Accepted** (D-069); return shape extended by CR-I8 (D-071). Shape is `Deps.GrantFn` = `PurchaseRules.GrantFn`, matches `MonetizationService.registerGrant`; registered through `Deps.registerGrant` in Start. Listed in 1b. Verified in the merge: all 5 kinds registered once (check_grants grant-kinds); Entitlement and Donation are set by MonetizationService in Init (the static check reports them PENDING because it only sees `registerGrant` calls) |
+| CR-G4 | gameplay (T-053) | `MultiplierService.getBoostSec(player, kind)` feeds the 2 h Hype cap | **Accepted** (D-069) as a call-time Data -> Gameplay read (1a). **Done** (sprint-3 fix, e008db3): `liveHypeSec` reads `getBoostSec` at call time |
+| CR-G5 | gameplay (T-049, T-050, T-052, T-032, T-073) | DuelService `challenge` / `respond` / `rematch` / `setBlock`, `RewardService.claim`; EconomyConfig `pityOdds`, `nextHatchOdds`, `isPityHit`, `DAILY_*`, `QUEST_STEPS`, `DUEL_*`, `DAY_SEC` | **Accepted** (D-069), as merged. Listed in 1b and 1c. **Done** (sprint-3 fix, e1f4a2f): RobuxEggPanel reads them through `GameData` |
+| CR-G6 | gameplay (T-053, T-073) | CustomEvents `LadderFallback`, `RestrictedEggGrant` | **Accepted** (D-069), added to `T.CustomEvent`. Emitted by MonetizationService after the commit, not by the grant fns (they run on a copy that may be dropped). **Done** (sprint-3 fix, 0d0fc38): allow-listed, emitted after `confirmSaved` |
+| CR-G7 | gameplay (T-052) | A look model for the Day-7 `WeekStreakAura` cosmetic | **Accepted** (D-069): fit id `WeekStreakAura` in the 1f builder handoff. **Done** (sprint-3 fix): in `MapLayout.FIT_IDS` (6df75c4); RewardService re-applies the look after a cosmetic claim (f7698d4) |
 | CR-W3 | world (T-059) | Ring API: `isInRing`, `getRingKnockback`, `reserveRing`, `teleportToRing` with `side: number`; own `"DuelRing"` lock | **Accepted** (D-069, behaviour D-061). Listed in 1b. DuelService calls reserveRing, teleportToRing, getRingKnockback, isInRing, releaseRing (once, in `finish`) with the merged names |
 | CR-P3 | physics (T-066) | `DuelState` Result before `PlayEffect DuelKnockback`; knockback only for a loser in the ring | **Accepted and verified** (D-069): DuelService `showResult` sends Result to both, then the effect, gated by `isInRing` (D-062 #7). Documented in 2 and 4c |
-| CR-L1 | lawyer (T-071, D-056) | New listing text for ladder, Hype Snack, Auto Clicker, Ring Light Retriever, Starter Pack, Robux eggs | **Done** (D-069): exact strings in `ProductCatalog` (`LADDER_NOTE`, `PITY_RULE` exported) and the 4f checklist. Galaxy Egg rows 14-15 are created today (L-14 resolved by D-057). **Open: systems fix** (RobuxShopPanel and RobuxEggPanel keep old local copies of the ladder note and pity rule) |
-| QA-F9 | qa (T-081) via systems | MonetizationService test seams `processReceipt`, `grantEntry`, `getGrant` | **Accepted** (D-069), listed in 1b. **Open: systems fix** |
+| CR-L1 | lawyer (T-071, D-056) | New listing text for ladder, Hype Snack, Auto Clicker, Ring Light Retriever, Starter Pack, Robux eggs | **Done** (D-069): exact strings in `ProductCatalog` (`LADDER_NOTE`, `PITY_RULE` exported) and the 4f checklist. Galaxy Egg rows 14-15 are created today (L-14 resolved by D-057). **Done** (sprint-3 fix, 5d89406): both panels read `ProductCatalog.LADDER_NOTE` / `PITY_RULE` |
+| QA-F9 | qa (T-081) via systems | MonetizationService test seams `processReceipt`, `grantEntry`, `getGrant` | **Accepted** (D-069), listed in 1b. **Done** (sprint-3 fix, e9538f4) |
 | QA-F10 | qa (T-081) | 3c says `NotYetProcessed` | **Done** (D-069): 3c now says `NotProcessedYet`; code already used the right item |
-| QA-F13 | qa (T-068) | Pure duel/daily helpers and public duel/reward entries | **Decided** (D-069): the merged names are canonical: `Util/DuelMath` (not DuelRules), `Util/DailyMath` (not DailyCalendar), `RewardService.claim` (not claimDaily); `DuelService.challenge` / `respond` / `rematch` match. **Open: qa fix** (retarget the probes; `DuelMath.acceptTaps` takes a TapState and `DailyMath.claim(lastClaimDay, streak, today)` returns (ok, newStreak), so those specs need new adapters) |
+| QA-F13 | qa (T-068) | Pure duel/daily helpers and public duel/reward entries | **Decided** (D-069): the merged names are canonical: `Util/DuelMath` (not DuelRules), `Util/DailyMath` (not DailyCalendar), `RewardService.claim` (not claimDaily); `DuelService.challenge` / `respond` / `rematch` match. **Done** (sprint-3 fix, fa196fc): Duel and DailyReward specs retargeted with adapters |
+| CR-I8 | integration (QA-14, sprint-3 fix round 2) | MonetizationService has no post-save hook, so grant fns send client messages (RobuxEgg `HatchResult`, FixedPet / StarterPack "Success" toasts) before the receipt save is confirmed; a failed save that is retried and granted later leaves the player with only the early message (S3) | **Decided** (D-071), shape below. **Open: systems fix** (fire the hook) and **gameplay fix** (move notifications into it) |
+
+**CR-I8 post-commit grant hook (D-071).** The grant fn may return a second value, a hook that runs only after the
+save holding the PurchaseId is confirmed:
+```luau
+-- PurchaseRules (systems) and Gameplay/Util/Deps (gameplay) both declare exactly this:
+export type OnCommitted = (player: Player) -> ()
+export type GrantFn = (player: Player, key: Types.ProductKey, data: ProfileData) -> (boolean, OnCommitted?)
+```
+1. The grant fn stays synchronous and mutates only the `data` copy. It must not fire remotes, notify, `task.defer`
+   client work, emit `Hatched`/funnel/telemetry, or schedule anything that reads `data` later. Whatever the player
+   should see is captured in the closure it returns (e.g. the rolled `results`, the toast text). Returning `true`
+   alone (no hook) stays valid; returning `false` discards any hook.
+2. MonetizationService (`PurchaseRules.applyGrant` passes the hook through) keeps the hook only if the grant was
+   applied and merged, stored in a per-server `pendingCommit[purchaseId] = { player, hook }` set **before**
+   `confirmSaved`.
+3. After `confirmSaved` returns true (first attempt, or the step-2 dedupe path of a later retry in the same server),
+   MonetizationService removes the entry and runs the hook once, in `task.spawn` wrapped in `pcall` (an error is
+   logged without personal info and never changes the decision), then sends its own "Thanks! ... is yours." toast and
+   `Purchase` effect from that same post-commit point, then returns `PurchaseGranted`. On the dedupe path with no
+   pending entry (already shown, or granted by an earlier server) nothing is sent.
+4. Save not confirmed -> `NotProcessedYet`; the entry stays pending for the retry. Entries are dropped on
+   `PlayerRemoving` (the grant and its message are then lost together; the next server's retry grants again with a
+   fresh hook) and are never run for a player no longer in `Players`.
+5. The hook may read the **live** profile (`DataService.getData`) and refresh attributes; it must not write the
+   profile. `EntitlementsChanged` and attribute writes stay where they are (right after the update): they reflect
+   state, not a promise to the player.
+6. qa: check_grants should flag a grant fn body that calls `FireClient`, `notify` or `task.defer`/`task.spawn` with
+   client work (QA follow-up, not blocking).
