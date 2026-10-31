@@ -22,11 +22,22 @@ export type DataApi = {
 	addCoins: (player: Player, amount: number, reason: Types.CoinReason) -> number,
 	trySpendCoins: (player: Player, amount: number, reason: Types.CoinReason) -> boolean,
 	update: (player: Player, mutator: (data: ProfileData) -> ()) -> boolean,
+	getSetting: (player: Player, key: Types.SettingKey) -> boolean,
 }
 
 export type ZoneApi = {
 	getWorld: (player: Player) -> Types.WorldId,
 	isNearBoss: (player: Player, bossId: string) -> boolean,
+	isNearEggStand: ((player: Player, eggId: Types.EggId) -> boolean)?, -- arrives in sprint 2 (T-038)
+	getPod: ((player: Player) -> number)?, -- arrives in sprint 2 (T-038); 0 = in no pod
+}
+
+export type ComplianceApi = {
+	paidRandomAllowed: ((player: Player) -> boolean)?,
+}
+
+export type DuelApi = {
+	isInDuel: ((player: Player) -> boolean)?, -- DuelService arrives in sprint 3
 }
 
 export type CharacterApi = {
@@ -38,6 +49,7 @@ export type MonetizationApi = {
 	EntitlementsChanged: RBXScriptSignal?,
 	getPaidTier: ((player: Player) -> number)?,
 	hasVip: ((player: Player) -> boolean)?,
+	owns: ((player: Player, key: Types.ProductKey) -> boolean)?,
 }
 
 export type TelemetryApi = {
@@ -94,6 +106,24 @@ end
 
 function Deps.pets(): PetApi?
 	return find("Gameplay", "PetService") :: PetApi?
+end
+
+function Deps.compliance(): ComplianceApi?
+	return find("Data", "ComplianceService") :: ComplianceApi?
+end
+
+function Deps.duel(): DuelApi?
+	return find("Gameplay", "DuelService") :: DuelApi?
+end
+
+-- True while the player is in a duel. DuelService is the source; the Activity check covers the gap before it lands.
+function Deps.inDuel(player: Player, activity: Types.Activity): boolean
+	if activity == "Duel" then
+		return true
+	end
+	local duel = Deps.duel()
+	local fn = duel and duel.isInDuel
+	return fn ~= nil and fn(player) == true
 end
 
 -- Fire-and-forget telemetry: never errors, never yields the caller.

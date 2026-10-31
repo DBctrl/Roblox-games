@@ -122,7 +122,8 @@ local function award(player: Player, boss: Boss, auto: boolean)
 	end
 
 	local coins = math.floor(boss.coins * MultiplierService.getCoinMultiplier(player))
-	local added = dataApi.addCoins(player, coins, "BossWin")
+	-- addCoins returns the new BALANCE (or 0 on failure), so report the amount won, not the balance (QA-8).
+	local added = if dataApi.addCoins(player, coins, "BossWin") > 0 then coins else 0
 	local firstWinNow = false
 	dataApi.update(player, function(d)
 		d.stats.bossWins += 1
@@ -135,14 +136,16 @@ local function award(player: Player, boss: Boss, auto: boolean)
 
 	bossWonEvent:Fire(player, boss.id, added, auto)
 	playWinEffect(player, boss, added)
-	Deps.economy(player, "Source", added, "BossWin")
+	if added > 0 then
+		Deps.economy(player, "Source", added, "BossWin")
+	end
 	if firstWinNow then
 		Deps.funnel(player, "FirstWin")
 	end
 	task.delay(EconomyConfig.BOSS_COOLDOWN_SEC, ActivityService.finish, player, "BossFight")
 end
 
--- Starts a fight. `auto` = Auto-Mog (sprint 2): skips the distance check, everything else applies.
+-- Starts a fight. `auto == true` = Auto-Mog (IdleService): skips the distance check, everything else applies.
 function BossService.tryFight(player: Player, bossId: string, auto: boolean): (boolean, string?)
 	local dataApi = Deps.data()
 	local data = dataApi.getData(player)
@@ -163,7 +166,7 @@ function BossService.tryFight(player: Player, bossId: string, auto: boolean): (b
 	if zone.getWorld(player) ~= boss.world then
 		return false, "WrongWorld"
 	end
-	if not auto and not zone.isNearBoss(player, bossId) then
+	if auto ~= true and not zone.isNearBoss(player, bossId) then -- QA-4: only a real `true` skips range
 		return false, "TooFar"
 	end
 	if currentMp(data) < boss.mpNeed then
@@ -172,7 +175,7 @@ function BossService.tryFight(player: Player, bossId: string, auto: boolean): (b
 	if not ActivityService.tryBegin(player, "BossFight") then
 		return false, "Busy"
 	end
-	task.delay(EconomyConfig.BOSS_FIGHT_SEC, award, player, boss, auto)
+	task.delay(EconomyConfig.BOSS_FIGHT_SEC, award, player, boss, auto == true)
 	return true
 end
 
