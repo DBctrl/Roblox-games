@@ -4,7 +4,11 @@
 -- boss-stage / stand lookup and server distance checks. Map names come only from Shared.World.MapLayout.
 -- T-038: server pod presence (`CurrentPod`, `PodChanged`), the World 2 portal sign (Touched shows
 -- "World 2 coming Saturday!" and never teleports; teleport = T-092) and isNearEggStand.
--- Later tickets: rings + teleportToWorld (T-059).
+-- T-059: Mog Rings (World 1 only in lean v1). Reservation, teleport onto the duel pads, the
+-- "DuelRing" movement lock while a player is on a ring, a 0.5 s server leash (outside the ring area
+-- = snapped back to the pad), ring membership (isInRing) and the foam-pit knockback direction.
+-- Nil-safe: without the map every ring call uses the MapLayout fallback geometry.
+-- teleportToWorld is T-092 (Update 1).
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -49,6 +53,18 @@ local MAX_POD_INDEX = 7
 local PORTAL_PAD = 6 -- touching player's root must be this close to the portal box (anti-spoof)
 local PORTAL_NOTICE_COOLDOWN = 5 -- seconds between portal notices per player
 local PORTAL_NOTICE_TEXT = "World 2 coming Saturday!"
+local RING_LOCK_REASON = "DuelRing" -- own lock key; DuelService's "Duel" lock is separate
+local RING_MAX_OCCUPANTS = 2
+-- Lean v1 (D-034): rings exist only in Glow Town. World 2 rings come with T-092.
+local RING_WORLDS: { [number]: true } = { [1] = true }
+
+type CharacterServiceLike = {
+	setMovementLocked: (player: Player, reason: string, locked: boolean) -> (),
+}
+
+type RingState = {
+	occupants: { [Player]: number }, -- player -> side (1 | 2)
+}
 
 type DataServiceLike = {
 	ProfileLoaded: RBXScriptSignal,
@@ -68,6 +84,8 @@ local lastPortalNotice: { [Player]: number } = {}
 local notifyRemote: RemoteEvent? = nil
 local dataService: DataServiceLike? = nil
 local warnedMissing: { [string]: true } = {} -- map ids already reported missing (warn once each)
+local rings: { [number]: { [number]: RingState } } = {} -- worldId -> ringIndex -> reservation
+local characterService: CharacterServiceLike? = nil
 
 -- QA-9: the layout fallback hides builder mistakes, so report each missing map id once.
 local function warnMissingOnce(kind: string, id: string)
@@ -147,6 +165,107 @@ local function placeCharacter(player: Player, character: Model)
 	character:PivotTo(spawnCf + spread)
 end
 
+-- Mog rings ---------------------------------------------------------------------------------------
+
+local function isPlayer(value: any): boolean
+	return typeof(value) == "Instance" and value:IsA("Player")
+end
+
+local function ringWorldAllowed(worldId: any): boolean
+	return typeof(worldId) == "number" and RING_WORLDS[worldId] == true
+end
+
+local function ringState(worldId: number, ringIndex: number): RingState?
+	local world = rings[worldId]
+	return if world then world[ringIndex] else nil
+end
+
+-- (worldId, ringIndex, side) the player currently occupies, or nil.
+local function ringOf(player: Player): (number?, number?, number?)
+	for worldId, world in rings do
+		for ringIndex, state in world do
+			local side = state.occupants[player]
+			if side then
+				return worldId, ringIndex, side
+			end
+		end
+	end
+	return nil, nil, nil
+end
+
+local function setRingLock(player: Player, locked: boolean)
+	if characterService then
+		characterService.setMovementLocked(player, RING_LOCK_REASON, locked)
+	end
+end
+
+local function findCharacterService(): CharacterServiceLike?
+	-- Sibling World module, looked up by name (CharacterService never requires ZoneService: no cycle).
+	local module = script.Parent and script.Parent:FindFirstChild("CharacterService")
+	if module and module:IsA("ModuleScript") then
+		local ok, service = pcall(require :: any, module)
+		if ok and typeof(service) == "table" and typeof(service.setMovementLocked) == "function" then
+			return service :: CharacterServiceLike
+		end
+	end
+	warn("[ZoneService] CharacterService not found; ring teleports do not lock movement")
+	return nil
+end
+
+-- Moves a live character onto its pad and stops it. Returns false when there is no live character.
+local function placeOnPad(player: Player, worldId: number, ringIndex: number, side: number): boolean
+	local character = player.Character
+	local root = rootPart(player)
+	local cf = MapLayout.getRingSideCFrame(worldId, ringIndex, side)
+	if character == nil or root == nil or cf == nil then
+		return false
+	end
+	character:PivotTo(cf)
+	root.AssemblyLinearVelocity = Vector3.zero
+	root.AssemblyAngularVelocity = Vector3.zero
+	return true
+end
+
+-- Takes a player off whatever ring they occupy (unlocks only our own "DuelRing" reason).
+local function leaveRing(player: Player)
+	local worldId, ringIndex = ringOf(player)
+	if worldId == nil or ringIndex == nil then
+		return
+	end
+	local state = ringState(worldId, ringIndex)
+	if state then
+		state.occupants[player] = nil
+	end
+	setRingLock(player, false)
+end
+
+local function freeRing(worldId: number, ringIndex: number)
+	local state = ringState(worldId, ringIndex)
+	if state == nil then
+		return
+	end
+	rings[worldId][ringIndex] = nil
+	for player in state.occupants do
+		setRingLock(player, false)
+	end
+end
+
+-- Server leash: a ring occupant whose root is outside the ring area (walked off with a client speed
+-- hack, flung, fell through) goes back to the pad. The foam pit is inside the area, so the loser's
+-- knockback is never undone.
+local function updateRings()
+	for worldId, world in rings do
+		for ringIndex, state in world do
+			for player, side in state.occupants do
+				local pos = ZoneService.getCharacterPosition(player)
+				if pos ~= nil and not MapLayout.isInRingArea(worldId, ringIndex, pos) then
+					placeOnPad(player, worldId, ringIndex, side)
+				end
+			end
+		end
+	end
+end
+
 local function onPlayerAdded(player: Player)
 	if worldOf[player] ~= nil then
 		return -- already handled (joined between Connect and GetPlayers)
@@ -162,6 +281,15 @@ local function onPlayerAdded(player: Player)
 		player.RespawnLocation = spawnInst
 	end
 	player.CharacterAdded:Connect(function(character)
+		if ringOf(player) ~= nil then
+			-- Respawned while on a ring (DuelService forfeits on death): back on the pad until released.
+			local root = character:WaitForChild("HumanoidRootPart", ROOT_WAIT_SEC)
+			local worldId, ringIndex, side = ringOf(player)
+			if root and player.Character == character and worldId and ringIndex and side then
+				placeOnPad(player, worldId, ringIndex, side)
+				return
+			end
+		end
 		placeCharacter(player, character)
 	end)
 	if player.Character then
@@ -173,6 +301,12 @@ local function onPlayerAdded(player: Player)
 end
 
 local function onPlayerRemoving(player: Player)
+	-- A leaving duelist frees the whole ring (forfeit, architecture 4c): the opponent is unlocked
+	-- and the ring can host the next duel. DuelService's own releaseRing call is then a no-op.
+	local ringWorld, ringIndex = ringOf(player)
+	if ringWorld ~= nil and ringIndex ~= nil then
+		freeRing(ringWorld, ringIndex)
+	end
 	worldOf[player] = nil
 	podOf[player] = nil
 	lastPortalNotice[player] = nil
@@ -349,6 +483,16 @@ function ZoneService:Start()
 		podParts[inst] = nil
 	end)
 	MapLayout.observe("Portal", onPortalAdded, onPortalRemoved)
+	characterService = findCharacterService()
+	for worldId in RING_WORLDS do
+		for ringIndex = 1, MapLayout.RING_COUNT do
+			if MapLayout.isValidRing(worldId, ringIndex) and MapLayout.getRing(worldId, ringIndex) == nil then
+				warn(
+					`[ZoneService] No MogRing {ringIndex} in WorldId {worldId}; duels use the MapLayout fallback`
+				)
+			end
+		end
+	end
 	local elapsed = 0
 	RunService.Heartbeat:Connect(function(dt: number)
 		elapsed += dt
@@ -357,6 +501,7 @@ function ZoneService:Start()
 		end
 		elapsed = 0
 		updatePods()
+		updateRings()
 	end)
 end
 
@@ -459,6 +604,97 @@ function ZoneService.isNearEggStand(player: Player, eggId: Types.EggId): boolean
 		return false
 	end
 	return (playerPos - standPos).Magnitude <= interactRange + RANGE_SLACK
+end
+
+-- Mog rings (T-059) ------------------------------------------------------------------------------
+-- DuelService (server) is the only caller of reserve/release/teleport. All checks are server-side.
+
+-- Reserves the first free ring in the world and returns its index, or nil when every ring is busy
+-- (or the world has no rings in v1). Both rings can run at the same time.
+function ZoneService.reserveRing(worldId: Types.WorldId): number?
+	if not ringWorldAllowed(worldId) or not MapLayout.isValidWorld(worldId) then
+		return nil
+	end
+	local world = rings[worldId]
+	if world == nil then
+		world = {}
+		rings[worldId] = world
+	end
+	for ringIndex = 1, MapLayout.RING_COUNT do
+		if world[ringIndex] == nil and MapLayout.isValidRing(worldId, ringIndex) then
+			world[ringIndex] = { occupants = {} }
+			return ringIndex
+		end
+	end
+	return nil
+end
+
+-- Frees the ring and unlocks its occupants ("DuelRing" lock). Idempotent. Call it once, when the
+-- duel ends (also after a forfeit); never later for a duel that already ended, or it frees the
+-- next duel's ring.
+function ZoneService.releaseRing(worldId: Types.WorldId, ringIndex: number)
+	if not MapLayout.isValidRing(worldId, ringIndex) then
+		return
+	end
+	freeRing(worldId, ringIndex)
+end
+
+-- Puts the player on pad `side` (1 or 2) of a reserved ring, facing the opponent's pad, and locks
+-- walking/jumping ("DuelRing") until releaseRing or leave. Ignored when the ring is not reserved,
+-- the side is taken by someone else, or the input is bad. Moves the player's world to the ring's.
+function ZoneService.teleportToRing(player: Player, worldId: Types.WorldId, ringIndex: number, side: number)
+	if not isPlayer(player) or player.Parent ~= Players then
+		return
+	end
+	if not MapLayout.isValidRing(worldId, ringIndex) or (side ~= 1 and side ~= 2) then
+		return
+	end
+	local state = ringState(worldId, ringIndex)
+	if state == nil then
+		warn(`[ZoneService] teleportToRing: ring {ringIndex} in WorldId {worldId} is not reserved`)
+		return
+	end
+	local others = 0
+	for other, otherSide in state.occupants do
+		if other ~= player then
+			others += 1
+			if otherSide == side then
+				warn(`[ZoneService] teleportToRing: side {side} of ring {ringIndex} is taken`)
+				return
+			end
+		end
+	end
+	if others >= RING_MAX_OCCUPANTS then
+		return
+	end
+	local oldWorld, oldRing = ringOf(player)
+	if oldWorld ~= nil and (oldWorld ~= worldId or oldRing ~= ringIndex) then
+		leaveRing(player)
+	end
+	state.occupants[player] = side
+	setWorld(player, worldId)
+	setRingLock(player, true)
+	placeOnPad(player, worldId, ringIndex, side)
+end
+
+-- Flat unit vector from the ring centre to its foam pit (Pit part, else layout). Never nil.
+function ZoneService.getRingKnockback(worldId: Types.WorldId, ringIndex: number): Vector3
+	return MapLayout.getRingKnockback(worldId, ringIndex)
+end
+
+-- Server ring membership: true only while the player is an occupant of this reserved ring (placed
+-- by teleportToRing) AND their live root is inside the ring area (ring + foam pit). Check it before
+-- any knockback or ragdoll trigger (GDD 6: only the two duelists, only inside the ring).
+function ZoneService.isInRing(player: Player, worldId: Types.WorldId, ringIndex: number): boolean
+	if not isPlayer(player) or not MapLayout.isValidRing(worldId, ringIndex) then
+		return false
+	end
+	local state = ringState(worldId, ringIndex)
+	if state == nil or state.occupants[player] == nil then
+		return false
+	end
+	local pos = ZoneService.getCharacterPosition(player)
+	return pos ~= nil and MapLayout.isInRingArea(worldId, ringIndex, pos)
 end
 
 return ZoneService

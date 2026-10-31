@@ -35,6 +35,19 @@ Lean v1 (D-034, T-038), World 1 only. Builder must create in Glow Town (WorldId 
   Pod boxes: make the box cover the whole chair area and at least 8 studs tall from the floor, so
   a standing or seated character's HumanoidRootPart is inside it.
 
+Mog Rings (T-059, sprint 3), World 1 only in v1. Builder must create in Glow Town:
+  - 2 Models tagged "MogRing": RingIndex = 1 and RingIndex = 2, both WorldId = 1, each with
+    ModelStreamingMode = Atomic and these direct children (names exact, all BaseParts, Anchored):
+      "Side1"  floor pad where duelist 1 stands (top surface = floor; code adds 3 studs height).
+      "Side2"  floor pad where duelist 2 stands, about 16 studs from Side1, facing it.
+      "Pit"    the foam pit (cartoon foam, CanCollide on so the loser lands in it). Put it beside
+               the ring, ~16 studs from the ring centre, NOT between Side1 and Side2.
+  - Everything else (ropes, posts, floor, foam cubes) goes inside the same Model, so the Model's
+    bounding box covers the ring floor AND the pit: that box (+4 studs) is the ring area the server
+    uses for membership. Keep each ring + pit inside a 40 x 40 stud footprint, no roof.
+  - Rings sit at WORLDS[1].rings (60, 0, 70) and (110, 0, 70); 50 studs apart so both run at once.
+  Without the map the code uses those centres with Side1/Side2 at -/+ 8 X and the pit at +16 Z.
+
 === LOOK AND FIT TEMPLATES FOR BUILDER (server only) ==============================================
   ServerStorage > Assets (Folder) > Looks (Folder) > <one Folder or Model per id below>
   Each template holds ONLY Accessory instances (each with a Part named "Handle" and an Attachment
@@ -462,7 +475,19 @@ end
 
 -- Mog rings -------------------------------------------------------------------------------------
 
+MapLayout.RING_COUNT = 2 -- rings per world hub (GDD 6)
+MapLayout.RING_SIDE1_NAME = "Side1"
+MapLayout.RING_SIDE2_NAME = "Side2"
+MapLayout.RING_PIT_NAME = "Pit"
+MapLayout.RING_SIDE_OFFSET = 8 -- fallback: Side1/Side2 at centre -/+ 8 studs on X
+MapLayout.RING_PIT_OFFSET = Vector3.new(0, 0, 16) -- fallback: foam pit beside the ring
+MapLayout.RING_AREA_PAD = 4 -- studs added around the ring Model's box for membership
+MapLayout.RING_AREA_VERTICAL_PAD = 20 -- jumps and the knockback arc stay "in the ring"
+MapLayout.RING_FALLBACK_RADIUS = 28 -- XZ radius of the ring area when the Model is missing
+
 export type RingParts = { model: Instance, side1: BasePart?, side2: BasePart?, pit: BasePart? }
+
+local DEFAULT_KNOCKBACK = Vector3.new(0, 0, 1)
 
 function MapLayout.getRing(worldId: number, ringIndex: number): RingParts?
 	local model = findTagged(Tag.MogRing, function(inst)
@@ -475,7 +500,130 @@ function MapLayout.getRing(worldId: number, ringIndex: number): RingParts?
 		local child = model:FindFirstChild(name)
 		return if child and child:IsA("BasePart") then child else nil
 	end
-	return { model = model, side1 = part("Side1"), side2 = part("Side2"), pit = part("Pit") }
+	return {
+		model = model,
+		side1 = part(MapLayout.RING_SIDE1_NAME),
+		side2 = part(MapLayout.RING_SIDE2_NAME),
+		pit = part(MapLayout.RING_PIT_NAME),
+	}
+end
+
+function MapLayout.isValidRing(worldId: any, ringIndex: any): boolean
+	return MapLayout.isValidWorld(worldId)
+		and typeof(ringIndex) == "number"
+		and ringIndex == math.floor(ringIndex)
+		and ringIndex >= 1
+		and ringIndex <= MapLayout.RING_COUNT
+		and MapLayout.WORLDS[worldId].rings[ringIndex] ~= nil
+end
+
+-- Layout fallback centre (nil for an unknown world/ring). Safe before the map exists.
+local function fallbackRingCentre(worldId: number, ringIndex: number): Vector3?
+	if not MapLayout.isValidRing(worldId, ringIndex) then
+		return nil
+	end
+	return MapLayout.WORLDS[worldId].rings[ringIndex]
+end
+
+-- Ring centre: midpoint of Side1/Side2, else the Model pivot, else the layout fallback.
+function MapLayout.getRingCentre(worldId: number, ringIndex: number): Vector3?
+	local fallback = fallbackRingCentre(worldId, ringIndex)
+	if fallback == nil then
+		return nil
+	end
+	local ring = MapLayout.getRing(worldId, ringIndex)
+	if ring then
+		if ring.side1 and ring.side2 then
+			return (ring.side1.Position + ring.side2.Position) / 2
+		end
+		local pos = MapLayout.positionOf(ring.model)
+		if pos then
+			return pos
+		end
+	end
+	return fallback
+end
+
+-- Floor position of a duelist pad (side 1 or 2): the Side part, else the layout fallback.
+local function sidePosition(worldId: number, ringIndex: number, side: number): Vector3?
+	local fallback = fallbackRingCentre(worldId, ringIndex)
+	if fallback == nil or (side ~= 1 and side ~= 2) then
+		return nil
+	end
+	local ring = MapLayout.getRing(worldId, ringIndex)
+	local part = ring and (if side == 1 then ring.side1 else ring.side2)
+	if part then
+		return part.Position
+	end
+	local sign = if side == 1 then -1 else 1
+	return fallback + Vector3.new(sign * MapLayout.RING_SIDE_OFFSET, 0, 0)
+end
+
+-- Where to put duelist `side` (1 or 2): on its pad, raised by SPAWN_HEIGHT, facing the other pad.
+function MapLayout.getRingSideCFrame(worldId: number, ringIndex: number, side: number): CFrame?
+	local own = sidePosition(worldId, ringIndex, side)
+	local other = sidePosition(worldId, ringIndex, if side == 1 then 2 else 1)
+	if own == nil or other == nil then
+		return nil
+	end
+	local pos = own + Vector3.new(0, MapLayout.SPAWN_HEIGHT, 0)
+	local look = Vector3.new(other.X - own.X, 0, other.Z - own.Z)
+	if look.Magnitude < 1e-3 then
+		look = Vector3.new(0, 0, -1)
+	end
+	return CFrame.lookAt(pos, pos + look.Unit)
+end
+
+-- Foam pit centre: the Pit part, else the layout fallback.
+function MapLayout.getRingPitPosition(worldId: number, ringIndex: number): Vector3?
+	local fallback = fallbackRingCentre(worldId, ringIndex)
+	if fallback == nil then
+		return nil
+	end
+	local ring = MapLayout.getRing(worldId, ringIndex)
+	if ring and ring.pit then
+		return ring.pit.Position
+	end
+	local centre = MapLayout.getRingCentre(worldId, ringIndex) or fallback
+	return centre + MapLayout.RING_PIT_OFFSET
+end
+
+-- Flat (XZ) unit vector from the ring centre to its foam pit. Never nil: +Z for bad input.
+function MapLayout.getRingKnockback(worldId: number, ringIndex: number): Vector3
+	local centre = MapLayout.getRingCentre(worldId, ringIndex)
+	local pit = MapLayout.getRingPitPosition(worldId, ringIndex)
+	if centre == nil or pit == nil then
+		return DEFAULT_KNOCKBACK
+	end
+	local dir = Vector3.new(pit.X - centre.X, 0, pit.Z - centre.Z)
+	if dir.Magnitude < 1e-3 then
+		return DEFAULT_KNOCKBACK
+	end
+	return dir.Unit
+end
+
+-- Geometry only: true when `point` is inside the ring area (ring Model box incl. pit, padded; or
+-- the fallback radius when the Model is missing). The server decides membership (ZoneService).
+function MapLayout.isInRingArea(worldId: number, ringIndex: number, point: Vector3): boolean
+	if not MapLayout.isValidRing(worldId, ringIndex) or typeof(point) ~= "Vector3" then
+		return false
+	end
+	local ring = MapLayout.getRing(worldId, ringIndex)
+	local cf, size = MapLayout.boxOf(if ring then ring.model else nil)
+	if cf and size then
+		local localPoint = cf:PointToObjectSpace(point)
+		local half = size / 2
+		return math.abs(localPoint.X) <= half.X + MapLayout.RING_AREA_PAD
+			and math.abs(localPoint.Z) <= half.Z + MapLayout.RING_AREA_PAD
+			and math.abs(localPoint.Y) <= half.Y + MapLayout.RING_AREA_VERTICAL_PAD
+	end
+	local centre = MapLayout.getRingCentre(worldId, ringIndex)
+	if centre == nil then
+		return false
+	end
+	local flat = Vector3.new(point.X - centre.X, 0, point.Z - centre.Z)
+	return flat.Magnitude <= MapLayout.RING_FALLBACK_RADIUS
+		and math.abs(point.Y - centre.Y) <= MapLayout.RING_AREA_VERTICAL_PAD
 end
 
 -- Portals, spawns, leaderboards, podium ---------------------------------------------------------
