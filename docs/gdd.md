@@ -1,5 +1,6 @@
 # Game Design Document v1: "Aura Up!" (working title), mog clicker simulator
 _Owned by scenarist. Status: **v1 GDD rev 1, awaiting owner approval (gate 1).** Rev 1 (D-017) answers the lawyer's review (docs/legal.md, D-016): sections marked **(rev 1)** changed and are the only ones the lawyer needs to re-check. Replaces the D-013 twist proposal (owner chose no twist, D-014). Inputs: docs/marketing/brief.md sections 2, 4 and 5, docs/marketing/competitors.md (gaps 1, 2, 3, 6, 7), D-011..D-014. Every price and every odds number is **PROPOSED, needs owner approval**. All numbers live in one config file (`src/shared/Gameplay/EconomyConfig`), so qa can retune without code changes._
+_**Rev 2 (D-033, balance pass for QA-F1..F3):** a balance-only change. It touches only parts of sections 4, 4.6, 4.7, 7 and 9, each marked **(rev 2)**, and the new 4.8 table lists every number that changed. Nothing in monetization or prices changed, so the D-021 approval scope is the same._
 
 ## 1. Concept (rev 1)
 - **One sentence:** Tap to build Mog Points, out-glow silly cartoon bosses for coins, hatch pets, rebirth into a neon second world, and challenge friends to fair, opt-in mog-offs where the loser goes flying.
@@ -42,7 +43,7 @@ Side loops: lifetime MP --> RANK-UP (visible cartoon transformation). Opt-in DUE
 ```
 
 ## 4. Economy math
-**Assumptions for every timing:** manual tapping at 5 taps/s (a fair kid on mobile; at 3 taps/s add about 40%), a boss fight cycle of 4 s (3 s mog-off animation plus 1 s), and a server cap of 12 accepted taps/s.
+**Assumptions for every timing:** manual tapping at 5 taps/s (a fair kid on mobile). **(rev 2)** At 3 taps/s, the first 5 minutes take about 30-40% longer (first win 0:49 vs 0:36, Rank 2 +32% to +41%), but the first rebirth takes only about 15-25% longer (12:28-14:48 vs 10:41-11:46). Coins come from fixed boss rates, not taps, so tap speed matters less once the player is saving coins. Other assumptions: a boss fight cycle of 4 s (3 s mog-off animation plus 1 s), and a server cap of 12 accepted taps/s.
 
 ### 4.1 Multiplier formula (server-computed only) (rev 1)
 - `MP per tap = ToolPower x M`, `MP/s in a pod = PodRate x M`
@@ -108,34 +109,60 @@ If MP is below the threshold, the MOG button is grey and shows "Need 600 MP (you
 - **World 2** portal unlocks at **Rebirth 3**. (rev 1: there is no paid skip. Rebirths and the portal can't be bought.) A prompt "REBIRTH READY" pulses when coins reach the cost.
 
 ### 4.6 Auto systems (unlockable progression) (rev 1)
-- **Auto-Tap (free):** unlocks at Rank 3 (~9 min), 3 taps/s. Paid Auto Clicker = 6 taps/s from the start. Auto and manual taps together are capped at 12/s on the server.
+- **Auto-Tap (free):** unlocks at Rank 3 (**(rev 2)** ~8-10 min at 5 taps/s, 4.7), 3 taps/s. Paid Auto Clicker = 6 taps/s from the start. Auto and manual taps together are capped at 12/s on the server.
 - **Auto-Mog (free):** unlocks at Rebirth 1. It re-fights your strongest beatable boss in the current world every 5 s, even while you sit in a pod (the AFK combo). (rev 1: there is no paid early unlock, because it ran coin-earning fights. Auto-Mog is free only.) Auto-mog never runs in duels.
 
-### 4.7 Simulated timings (free player, life 1, M = 1, 5 taps/s) (rev 1: recheck only, free table unchanged)
-| Time | Event | Check |
-|---|---|---|
-| 0:00-0:10 | Spawn facing Sleepy Sid, camera pan, "TAP to power up!" | |
-| 0:30 | 100 MP (100 taps) | |
-| **0:38** | **First boss win** (MOG button pulses next to Sid). Ragdoll plus a free Starter Fit look piece. +10 coins | < 60 s (at 3 taps/s: ~0:50) |
-| 0:58 | 5 more Sid wins = 50 coins, arrow to the Tool Stand | |
-| **1:05** | **First upgrade:** Hair Gel (2 MP/tap) | < 2 min |
-| 1:42 | Beat Bedhead Benny (600 MP) | |
-| **2:05** | **First idle station:** Ring Light Pod (250 coins) | < 3 min |
-| 3:05 | Bubble Face Mask (400) | |
-| **3:40** | **First rank-up** (Rank 2 at 2,500 lifetime MP): full transformation moment | < 5 min |
-| 4:05 / 4:30 | Beat Sweatband Sal / first Basic Egg hatch (500) | |
-| 6:00 | Cool Shades | |
-| 8:30 | Beat Captain Cardio (62.5 coins/s) | |
-| ~9:10 | Rank 3, free Auto-Tap unlocks | |
-| **12:00-14:00** | **First rebirth** (15K coins; ~14 min if the player buys Fresh Kicks first) | ~10-15 min |
+### 4.7 Simulated timings (free player, life 1, no Robux) (rev 2: times now match the qa sim, docs/qa/timing-sim-sprint1.md)
+**(rev 2)** Each time cell gives two cases: "pod counts" means the Ring Light Pod MP/s counts while fighting (the pod is in boss range), and "boss-only" means it never counts. The real map lands between the two. Purchases happen in this order: Hair Gel, Ring Light Pod, Bubble Face Mask, 1 Basic Egg, Cool Shades, then save for Rebirth 1. Every time except Rank 2 is the T-024 sim output for rev 1. Only Rank 2 changed in rev 2, and it changes no later row, because Rank 2 unlocks nothing that speeds up play. The Rank 2 times come from the sim's own MP rates and need a qa sim rerun to confirm (4.8).
+| 5 taps/s (pod counts / boss-only) | Event | 3 taps/s (pod counts / boss-only) | Check |
+|---|---|---|---|
+| 0:00-0:10 | Spawn facing Sleepy Sid, camera pan, "TAP to power up!" | 0:00-0:10 | |
+| 0:30 | 100 MP (100 taps) | 0:43 | |
+| **0:36** | **First boss win** (MOG button pulses next to Sid). Ragdoll plus a free Starter Fit look piece. +10 coins | 0:49 | < 60 s |
+| ~0:53 | 5 Sid wins = 50 coins, arrow to the Tool Stand | ~1:07 | |
+| **0:56** | **First upgrade:** Hair Gel (2 MP/tap) | 1:09 | < 2 min |
+| 1:42 | Beat Bedhead Benny (600 MP) | 2:27 | |
+| **2:06** | **First idle station:** Ring Light Pod (250 coins) | 2:39 | < 3 min |
+| **2:48 / 3:16** | **First rank-up (rev 2)** (Rank 2 at **1,800** lifetime MP): full transformation moment | **3:42 / 4:36** | < 5 min at 5 and 3 taps/s |
+| 3:03 | Bubble Face Mask (400) | 3:37 | |
+| 3:40 / 4:26 | Beat Sweatband Sal | 4:46 / 6:16 | |
+| 3:56 / 4:17 | First Basic Egg hatch (500) | 4:50 / 4:51 | |
+| 5:30 / 5:54 | Cool Shades | 6:24 / 7:20 | |
+| 7:12 / 8:41 | Beat Captain Cardio (62.5 coins/s) | 9:27 / 12:36 | |
+| 8:00 / 9:40 | Rank 3, free Auto-Tap unlocks | 10:38 / 14:23 | |
+| **10:41 / 11:46** (band **10:30-12:00**, rev 2) | **First rebirth** (15K coins) | 12:28 / 14:48 | ~10-15 min |
+| 11:59 / 13:25 | First rebirth if the player also buys Fresh Kicks (7,500) first: it costs about 1:20-1:40, because the coins spent on Kicks are worth more than the extra MP before Rebirth 1 | 14:35 / 16:56 | optional detour, no target |
 
-**Long run (free, no Robux, about 45 min/day):** R2 ~27 min, R3 + World 2 ~40 min, R5 ~1 h 15, **R10 ~4 h**, beating King Shine ~5-6 h of play (about 7-8 days). With the x2 tier, R10 comes about 25% sooner; with x32 + VIP, about 60% sooner. qa confirms these with a sim script in sprint 1 and tunes only EconomyConfig.
+**(rev 2) First-rebirth band:** we keep the 15,000 Rebirth 1 cost and move the band to the real timing instead (QA-F2 option 1). At 5 taps/s it is **10:30-12:00**, and at 3 taps/s it is 12:30-15:00. Both sit inside the "~10-15 min" check. We keep the cost because a higher one would push a 3 taps/s player who stays at the bosses (14:48) past 15 min.
+
+**Long run (free, no Robux, about 45 min/day; rev 2: not re-simulated yet, qa T-047 confirms):** R2 ~27 min, R3 + World 2 ~40 min, R5 ~1 h 15, **R10 ~4 h**, beating King Shine ~5-6 h of play (about 7-8 days). With the x2 tier, R10 comes about 25% sooner; with x32 + VIP, about 60% sooner. qa confirms these with a sim script in sprint 1 and tunes only EconomyConfig.
 
 **Rev 1 recheck after the monetization changes:**
 - **Free player: no change.** Every free coin source (boss wins, daily calendar coins and D5 Coin Snack, codes, duel rewards, events) is untouched, and no cost changed. The table above and the R2/R3/R5/R10/King Shine times stand.
 - **Paying player: slightly slower than in v1, and capped.** Robux now buys only MP power (ladder, VIP, Hype Snack, Auto Clicker, pets). Coins still come only from bosses at fixed rates, so paid speed-up has a ceiling. x2 tier is still about 25% sooner to R10. The best case (x32 + VIP + Hype Snack always on + Auto Clicker + top pets) is about 60-65% sooner, **reached through MP only**. In v1 Skip Rebirth and coin packs could cut R10 time without limit; that path is gone.
 - **Starter Pack effect:** it used to give 3,000 coins plus the Selfie Booth (worth about 6,000 coins, about 3 min of play at 3:40). It now gives 30 min of Hype Snack plus a +0.30 pet, which is about 2-3 min faster to the first rebirth. Same feel, and no coins.
 - **Restricted players** (PolicyService flag): coin eggs stay fully available under option A, so their loop is the same as any free player's.
+
+### 4.8 Rev 2 changes (balance pass for QA-F1, QA-F2, QA-F3; D-033)
+**Config changes** (gameplay-programmer updates `src/shared/Gameplay/EconomyConfig.luau`):
+| GDD place | EconomyConfig field | Rev 1 | Rev 2 | Why |
+|---|---|---|---|---|
+| 7, Rank 2 "Comb Rookie" | `RANKS[2].lifetimeMp` | 2,500 | **1,800** | QA-F1: a 3 taps/s player who stays at the bosses reached Rank 2 at 5:31. At 1,800 that player gets there at about 4:36, still 24 s inside the 5-min target if walks run longer than assumed |
+
+No other EconomyConfig value changes. Tools, pods, bosses, rebirth cost (`REBIRTH_BASE_COST` 15,000, `REBIRTH_COST_GROWTH` 3), eggs, caps, auto systems and every Robux price and product stay at rev 1.
+
+**Doc-only changes** (no config field):
+| GDD place | Rev 1 | Rev 2 | Finding |
+|---|---|---|---|
+| 4.7 first rebirth band (5 taps/s) | 12:00-14:00 | 10:30-12:00 (3 taps/s: 12:30-15:00) | QA-F2 |
+| 4.7 Rank 2 time (5 taps/s) | 3:40 | 2:48 / 3:16 (3 taps/s: 3:42 / 4:36) | QA-F1 |
+| 4.7 other rows | rev 1 estimates (0:38, 1:05, 2:05, 3:05, 4:05/4:30, 6:00, 8:30, ~9:10) | sim times (see table) | QA-F2 |
+| 4.7 Fresh Kicks route | "~14 min" | 11:59 / 13:25 | QA-F2 |
+| 4 assumptions, 3 taps/s note | "add about 40%" | "+30-40% in the first 5 min, about +15-25% to the first rebirth" | QA-F3 |
+| 4.6 Auto-Tap unlock | ~9 min | ~8-10 min | QA-F2 |
+| 9 rank-up "WOW" time | ~3:40 | ~2:50-3:15 (3 taps/s ~3:40-4:40) | QA-F1 |
+
+**For qa (qa-owned files, listed here so nothing gets missed):** in `tests/sim/timing_sim.py`, set `GDD_TIMES` to the 4.7 times above. Change the "12:00-14:00" target to (630, 720) s for 10:30-12:00. Regenerate `tests/shared/Fixtures/GddTables.luau` with `--luau-fixture`, because the Rank 2 value changed. Then rerun the sim and confirm the rev 2 Rank 2 times.
 
 ## 5. Eggs and pets (rev 1)
 - **Equip slots:** 3 at start, +1 at Rebirth 3, +1 at Rebirth 8 (5 free max), +1 with VIP (6). **Inventory cap:** 60 pets, plus a free-player "auto-delete Commons" toggle and multi-delete. Pets follow the player (simple float, no pathfinding).
@@ -200,12 +227,12 @@ Each egg sums to 100%.
 - **Anti-grief:** 15 s challenge cooldown per target; max 1 pending outgoing challenge; per-session block list ("Block challenges from X"); duel request spam (3 declines in a row from the same target) auto-mutes that challenger for 10 min; ragdoll and knockback apply only inside the ring to the two duelists; leaving or disconnecting = forfeit with no reward to anyone.
 - **Server validation:** target exists, is in the same server, both are post-tutorial, both have duels On, neither is in a duel or hatching, the cooldowns hold; tap batches (client sends a count every 0.5 s) are clamped to 10/s x elapsed and accepted only inside the 8 s window; score, result, rewards and ragdoll trigger are server-only; rematch needs both accepts within the 10 s window.
 
-## 7. Rank ladder and visible transformation (lifetime MP, never resets)
+## 7. Rank ladder and visible transformation (lifetime MP, never resets) (rev 2: Rank 2 lowered to 1,800)
 Every rank-up plays a 3 s moment: spotlight, confetti, camera orbit, the new look pops on, and a server banner "<Name> leveled up to <Rank>!". Looks are **our own cartoon accessories and clothing layered on the player's avatar** (hair, outfit, shades, aura particle). No body-shape edits. Players can toggle "show my own avatar look" off.
 | Rank | Name | Lifetime MP | Look change |
 |---|---|---|---|
 | 1 | Fresh Spawn | 0 | messy cartoon bedhead hat |
-| 2 | Comb Rookie | 2,500 | neat hair + clean tee |
+| 2 | Comb Rookie | 1,800 | neat hair + clean tee (rev 2: was 2,500) |
 | 3 | Glow Starter | 15,000 | faint white aura |
 | 4 | Drip Apprentice | 60,000 | hoodie + sneakers glow |
 | 5 | Style Scout | 250,000 | cool shades |
@@ -269,9 +296,9 @@ Total: **23 products** (v1 had 34).
 - **30-38 s:** meter full -> "GO MOG HIM!" arrow; walk ~3 s; the giant MOG button pulses; 3 s pose-off (Sid tries a pose, fails comically). **First win at ~38 s:** Sid ragdolls off the stage into a foam pit, +10 coins burst, the avatar gets the Starter Fit with a pop. Quest line: "Win 5 more for Hair Gel (1/5)".
 - **38-65 s:** farm Sid; at 50 coins the Tool Stand glows; buy Hair Gel; tap numbers double (+2). Shop/Robux buttons appear in the HUD now (small, bottom-right, not blinking).
 - **65-125 s:** quest "Beat Bedhead Benny (600 MP)" -> win ~1:42 -> quest "Unlock the Ring Light Pod" -> stand in it at ~2:05; "+10/s" floats up while the player idles.
-- **2:05-3:40:** quest "Buy Bubble Face Mask" (~3:05). Rank meter in HUD.
-- **~3:40 WOW:** Rank 2 "Comb Rookie": spotlight, camera orbit, new hair + tee, server banner, nearby players see it.
-- **3:40-5:00:** Starter Pack pop-up (once, closable); quest "Hatch your first pet" (Basic Egg at ~4:30, odds shown); duels unlock, "Challenge someone!" tooltip on the leaderboard.
+- **2:05-3:15 (rev 2):** quest "Buy Bubble Face Mask" (~3:03). Rank meter in HUD.
+- **~2:50-3:15 WOW (rev 2; at 3 taps/s ~3:40-4:40):** Rank 2 "Comb Rookie" (1,800 lifetime MP): spotlight, camera orbit, new hair + tee, server banner, nearby players see it.
+- **3:15-5:00 (rev 2):** Starter Pack pop-up (once, closable); quest "Hatch your first pet" (Basic Egg at ~4:00-4:20, odds shown); duels unlock, "Challenge someone!" tooltip on the leaderboard.
 - **Come back tomorrow:** the Day 1 daily reward is claimed with a visible Day 2-7 calendar (Day 7 = exclusive aura), "Auto-Mog unlocks at your first rebirth" teaser, Saturday event countdown on the hub billboard.
 
 ## 10. Social and retention (rev 1)
