@@ -1,6 +1,6 @@
 # Architecture: "Aura Up!" (working title) v1
-_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1.1, 2026-10-31
-(D-017, updated for GDD rev 1 / option A in D-023). Built from docs/gdd.md rev 1, approved by the owner (D-021).
+_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1.2, 2026-10-31
+(D-017, updated for GDD rev 1 / option A in D-023, sprint-1 contract requests in D-032). Built from docs/gdd.md rev 1, approved by the owner (D-021).
 Source of truth for code contracts: `src/shared/Contracts/Remotes.luau` and `src/shared/Contracts/Types.luau`.
 Both must match this file. Applies lawyer rulings D-016 and D-019 (policy gate on Robux eggs only, next-tier-only
 ladder, restricted receipts). Prices are still placeholders (gate 5): they live only in config (`EconomyConfig`,
@@ -64,6 +64,13 @@ Upward calls are done by **inversion**, never by requiring up:
 - TapService -> DuelService (duel taps): DuelService calls `TapService.setTapSink(player, sink)` while a duel runs.
 - Anything -> QuestService / TelemetryService: QuestService listens to the L1/L2 signals; Gameplay calls
   `TelemetryService` (Data layer) directly.
+- **Call-time lookups (CR-c, sprint 1).** Gameplay reaches Data, World, PetService and later-sprint modules through
+  `src/server/Gameplay/Util/Deps.luau`: the module is found by name and required inside the call, never at file
+  top, and every optional accessor is nil-guarded. This is the one allowed same-folder upward read:
+  MultiplierService (L0) reads `PetService.getPetMultiplierSum` (L1) at refresh time. It is safe because no
+  module requires up at load time (no require cycle) and Init never calls another service. The other half of the
+  rule: **PetService must call `MultiplierService.refresh(player)` after every equip, unequip or delete** (4a), so
+  M is never stale. No other upward lookup is allowed without a Contract request.
 
 ### 1b. Server services
 | # | Module | Owner | Folder | Responsibility |
@@ -122,11 +129,21 @@ function ZoneService.releaseRing(worldId: T.WorldId, ringIndex: number): ()
 function ZoneService.teleportToRing(player: Player, worldId: T.WorldId, ringIndex: number, side: 1 | 2): ()
 function ZoneService.getRingKnockback(worldId: T.WorldId, ringIndex: number): Vector3 -- unit vector to foam pit
 function ZoneService.teleportToWorld(player: Player, worldId: T.WorldId): boolean -- checks unlock
+-- Added in sprint 1 (world request, accepted D-032). Safe with untrusted input (nil on bad ids).
+function ZoneService.getBossWorld(bossId: string): T.WorldId?             -- from MapLayout.BOSS_IDS
+function ZoneService.getBossStagePosition(bossId: string): Vector3?      -- BossStage part, else layout fallback
+function ZoneService.getShopStandPosition(worldId: T.WorldId, shop: MapLayout.ShopKind): Vector3?
+function ZoneService.getCharacterPosition(player: Player): Vector3?      -- live root position or nil
+function ZoneService.getInteractRange(): number                          -- EconomyConfig.INTERACT_RANGE
+-- isNearBoss allows INTERACT_RANGE + 6 studs of slack (lag, stage size), D-025.
 
 -- CharacterService
 function CharacterService.setLook(player: Player, lookId: string): ()        -- respects ShowOwnLook setting
 function CharacterService.setSpeedMultiplier(player: Player, mult: number): ()
 function CharacterService.setMovementLocked(player: Player, reason: string, locked: boolean): () -- reason-keyed
+function CharacterService.getSpeedMultiplier(player: Player): number
+function CharacterService.isMovementLocked(player: Player): boolean
+-- Sprint 1: setLook stores the look id only; applying accessories is T-038 (S2).
 
 -- ActivityService
 function ActivityService.tryBegin(player: Player, activity: T.Activity): boolean -- false if not Idle
@@ -151,6 +168,8 @@ ShopService.PodBought: RBXScriptSignal  -- (player: Player, podIndex: number)
 function ShopService.tryBuyTool(player: Player, toolIndex: number): (boolean, string?)
 function ShopService.tryBuyPod(player: Player, podIndex: number): (boolean, string?)
 function ShopService.getToolPower(player: Player): number
+function ShopService.refreshAttributes(player: Player): () -- rewrites ToolIndex/PodsMask from the profile;
+	-- RebirthService calls it after its reset (CR-a, accepted D-032)
 
 -- PetService
 PetService.Hatched: RBXScriptSignal -- (player: Player, eggId: T.EggId, results: { T.HatchedPet })
@@ -196,6 +215,12 @@ function QuestService.isTutorialDone(player: Player): boolean
 | 21a | Contracts/RateLimit | integration | `src/shared/Contracts` | Per-player, per-remote token bucket for every C->S handler (T-004) |
 | 21b | Contracts/NumberFormat | integration | `src/shared/Contracts` | Pure display formatting: K/M/B/T/Qa, commas, countdowns, multipliers, egg odds (T-004) |
 
+MapLayout functions the UI may call (CR-4, D-032): `getBossStage(bossId): Instance?` (a Model **or** a BasePart; use
+`MapLayout.positionOf(inst)` for its position, never `.Position`), `getBossStagePosition(bossId)`, `positionOf`,
+`getShopStand(worldId, shop): Instance?`, `getShopKindOf(inst): ShopKind?`, `getEggStand`, `getEggIdOf`, `observe`,
+`waitFor` (outside Init). There is **no** `getShopStands(kind)`: to match a ProximityPrompt to a stand, walk the
+prompt's ancestors and call `getShopKindOf` (see 1f).
+
 Sprint 3 adds `Contracts/ProductCatalog.luau` (T-069: ProductKey -> product id, grant kind, price label; ids filled
 after the owner approves prices and creates the products).
 
@@ -219,22 +244,53 @@ function NumberFormat.oddsPercent(weight: number): string -- weight out of 10,00
 TapBatch keeps its own per-tap bucket in TapService (taps per second); RateLimit only limits messages per second.
 
 ```luau
--- EconomyConfig surface other folders rely on (gameplay-programmer fills the values from GDD 4-7)
+-- EconomyConfig surface other folders rely on (gameplay-programmer owns the values, GDD 4-7). Field names are
+-- contract (CR-4, QA-F4, D-032): readers use exactly these names; `world` (not `worldId`) everywhere.
+export type Tool = { name: string, mpPerTap: number, cost: number, world: number }       -- cost 0 = free
+export type Pod  = { name: string, mpPerSec: number, cost: number, world: number }       -- base MP/s before M
+export type Boss = { id: string, name: string, world: number, mpNeed: number, coins: number }
+	-- id = builder's `BossId` (1f); mpNeed is a threshold, never spent; coins before coinRebirthMult/Coin Snack
+export type Rank = { name: string, lifetimeMp: number, lookId: string }                 -- lookId = 1f model name
+export type EggPet = { petId: string, weight: number }                                    -- weights sum to ODDS_TOTAL
+export type Egg  = { name: string, world: number, currency: "Coins" | "Robux", price: number,
+	pets: { EggPet }, restrictedGrant: string? }                                          -- filled by T-027 (S2)
+export type Pet  = { name: string, rarity: string, bonus: number }                       -- filled by T-027 (S2)
+
+EconomyConfig.TOOLS: { Tool }            -- array, index = tool index 1..12 (ToolIndex)
+EconomyConfig.PODS: { Pod }              -- array, index = PodIndex 1..7 (PodsMask bit i)
+EconomyConfig.BOSSES: { Boss }           -- ARRAY, weakest first; W1 = 1..7, W2 = 8..13
+EconomyConfig.BOSS_BY_ID: { [string]: Boss } -- same rows keyed by id (use this for lookups by id)
+EconomyConfig.RANKS: { Rank }            -- array, index = rank 1..12
+EconomyConfig.EGGS: { [T.EggId]: Egg }   -- map by egg id (empty until T-027)
+EconomyConfig.PETS: { [T.PetId]: Pet }   -- map by pet id (empty until T-027)
+
 EconomyConfig.TAP_CAP_PER_SEC: number          -- 12 (manual + auto, PvE)
+EconomyConfig.TAP_BATCH_MAX: number            -- 30, largest TapBatch count (section 2 #1; TapController sends <= this)
+EconomyConfig.TAP_BURST_SEC: number            -- 1, tap bucket holds this many seconds of taps
 EconomyConfig.DUEL_TAP_CAP_PER_SEC: number     -- 10
 EconomyConfig.M_CLAMP: number                  -- 10000 (v1; raised per world in later updates)
 EconomyConfig.PET_MULT_CAP: number             -- 25
 EconomyConfig.INVENTORY_CAP: number            -- 60
+EconomyConfig.INVENTORY_HARD_CAP: number       -- 66 (paid receipts may exceed the cap by 6, 4b)
 EconomyConfig.INTERACT_RANGE: number           -- 20 studs (boss stage, egg stand)
-EconomyConfig.TOOLS / PODS / BOSSES / RANKS / EGGS / PETS -- arrays/maps, GDD tables
+EconomyConfig.ODDS_TOTAL: number               -- 10000
+EconomyConfig.COIN_EGGS_POLICY_GATED: boolean  -- false (option A, D-023)
+EconomyConfig.BOSS_FIGHT_SEC / BOSS_COOLDOWN_SEC / BOSS_CYCLE_SEC: number -- 3 / 1 / 4
+-- Also: REBIRTH_*, WORLD2_REBIRTHS, AUTO_TAP_*, AUTO_CLICKER_RATE, AUTO_MOG_*, PET_SLOT*, VIP/HYPE/COIN_SNACK
+-- multipliers, BOOST_CAP_SEC, HYPE_SNACK_SEC, SPEED_SNEAKERS_SEC, SPEED_WALK_MULT, DUEL_* timings and caps.
 function EconomyConfig.rebirthCost(n: number): number            -- 15000 x 3^(n-1)
 function EconomyConfig.rebirthMult(rebirths: number): number     -- 1 + 0.5 x rebirths
 function EconomyConfig.coinRebirthMult(rebirths: number): number -- 1 + 0.1 x rebirths
 function EconomyConfig.paidTierMult(tier: number): number        -- 1, 2, 4, 8, 16, 32
 function EconomyConfig.petSlots(rebirths: number, vip: boolean): number -- 3, +1 R3, +1 R8, +1 VIP
 function EconomyConfig.duelScore(taps: number, ownRank: number, oppRank: number): number
-function EconomyConfig.validate(): () -- asserts every egg's weights sum to 10000; qa runs it in tests
+function EconomyConfig.rankForLifetimeMp(lifetimeMp: number): number   -- 1..12
+function EconomyConfig.bossCoinsPerSec(boss: Boss, rebirths: number): number -- coins x coinRebirthMult / cycle
+function EconomyConfig.validate(): () -- asserts table shapes and egg weight sums; BossService.Init + qa tests
 ```
+**Two boss-id lists must agree:** `EconomyConfig.BOSSES` (ids + `world`) is the source of truth for gameplay and
+UI; `MapLayout.BOSS_IDS` (per world, same order) is World's copy for the map fallback. qa adds a test that they
+are equal (checked equal at the sprint-1 merge).
 
 ### 1d. Client controllers
 | # | Controller | Owner | Folder | Responsibility |
@@ -273,7 +329,7 @@ coalesced), so attribute traffic stays inside the budget in section 7.
 | FirstWin, BestCoinsPerSec | boolean, number | BossService |
 | MpPerTap | number (ToolPower x M) | TapService |
 | RebirthCost | number | RebirthService |
-| IdleMpPerSec, AutoTapRate, AutoMogUnlocked | number, number, boolean | IdleService |
+| IdleMpPerSec, AutoTapRate, AutoTapUnlocked, AutoMogUnlocked | number, number, boolean, boolean | IdleService (AutoTapUnlocked = Rank >= 3 or Auto Clicker; until IdleService lands in S2, DataService's SetSetting uses its own Rank/AutoClickerOwned check, CR-3) |
 | InDuel, DuelWinsWeek | boolean, number | DuelService |
 | QuestStep, TutorialDone | number, boolean | QuestService |
 | DailyStreak, DailyClaimable, DailyNextClaimUnix | number, boolean, number | RewardService |
@@ -296,6 +352,18 @@ attributes only (section 1f); no code writes map attributes.
 | `Podium` | `Place` 1..3 | top-3 Lifetime MP looks |
 Look/pet/fit templates: builder puts them in `ReplicatedStorage.Assets.Pets` and `ServerStorage.Assets.Looks`
 (models named by pet id / look id). Logged in docs/asset-briefs/asset-log.md.
+
+**Builder handoff ids (CR-b, D-032).** The full tag/attribute contract is the header of
+`src/shared/World/MapLayout.luau`.
+- `BossId` values (13): World 1 `SleepySid`, `BedheadBenny`, `SweatbandSal`, `CaptainCardio`, `DukeOfDrip`,
+  `GlowQueen`, `AuraTitan`; World 2 `LaserLarry`, `DjDazzle`, `ChromeChamp`, `RunwayRex`, `DivaSupreme`, `KingShine`.
+- Look ids (model names in `ServerStorage.Assets.Looks`, 12): `FreshSpawn`, `CombRookie`, `GlowStarter`,
+  `DripApprentice`, `StyleScout`, `MainCharacter`, `Trendsetter`, `AuraFarmer`, `Icon`, `SpotlightLegend`,
+  `StarMogger`, `SupremeMogger`.
+- **ProximityPrompts on stands (CR-4 decision): builder creates them.** Each `ShopStand` and `EggStand` holds one
+  `ProximityPrompt` as a descendant (ActionText "Open Shop" / "Open Egg", HoldDuration 0, MaxActivationDistance 10,
+  RequiresLineOfSight off). No code creates or edits prompts. The client matches a triggered prompt by walking its
+  ancestors and calling `MapLayout.getShopKindOf` / `getEggIdOf`. Prompts only open UI; they never buy (0, GDD 8b).
 
 ## 2. Remotes
 Matches `Remotes.Definitions` exactly: **20 RemoteEvents (16 C->S, 4 S->C), 0 RemoteFunctions.** Payload types
@@ -381,7 +449,12 @@ function DataService.trySpendCoins(player: Player, amount: number, reason: T.Coi
 function DataService.update(player: Player, mutator: (data: T.ProfileData) -> ()): boolean
 	-- mutator runs synchronously (must not yield); then DataService marks its attributes dirty (5 Hz flush)
 function DataService.getSetting(player: Player, key: T.SettingKey): boolean
+-- Data-internal (CR-3, accepted D-032): only MonetizationService may call it (ProcessReceipt step 5, 3c).
+function DataService.saveAndConfirm(player: Player, predicate: (saved: { [any]: any }) -> boolean,
+	timeoutSec: number?): boolean -- **yields**; saves now, true once a save passing `predicate` is written
 ```
+`ProfileLoaded`/`ProfileReleasing` exist only after `DataService:Init()`; connect to them in `Start()`.
+Sprint 1 runs on the `LockedStore` UpdateAsync fallback until ProfileStore is installed with wally (D-028).
 Saving: ProfileStore auto-save, on leave (`EndSession`), and on shutdown (ProfileStore's `BindToClose`).
 
 ### 3c. ProcessReceipt and receipt-id dedupe (MonetizationService, the only assigner of `ProcessReceipt`)
@@ -517,18 +590,29 @@ Bag / Vault, paid Coin Snack, pod unlocks 2-7, Skip Rebirth, Skip to World 2, Au
 Never per tap, never more than 1 event per 5 s average per player.
 
 ## 6. Startup order and packages
-### Server (`src/server/Main.server.luau`, unchanged)
+### Server (`src/server/Main.server.luau`, T-026)
 1. `Remotes.setup()` creates `ReplicatedStorage.Remotes` with every remote.
-2. Require direct-child modules of `Data`, then `World`, then `Gameplay`.
-3. `Init()` on all, same order (local state, BindableEvents, no yields, no cross-service calls).
-4. `Start()` on all via `task.spawn`: grants registered, remotes and signals connected, loops started.
+2. Require services in this explicit order (missing ones are skipped; an unlisted direct-child module is loaded
+   last in its folder with a warning):
+   Data: DataService, ComplianceService, TelemetryService, MonetizationService, LeaderboardService.
+   World: ZoneService, CharacterService.
+   Gameplay: ActivityService, MultiplierService (L0); RankService, ShopService, PetService, BossService (L1);
+   TapService, RebirthService (L2); IdleService, DuelService, QuestService, RewardService (L3).
+3. `Init()` on all, same order (local state, BindableEvents, no yields, no cross-service calls). An Init error
+   stops the boot with the service name and a traceback.
+4. `Start()` on all, same order, each via `task.spawn` (errors keep their own trace): grants registered, remotes
+   and signals connected, loops started. Services may be written `X.Init()` or `X:Init()`; the bootstrap passes
+   the module as `self`. DataService's Start yields (backend probe) before loading players, so every other Start
+   has connected `ProfileLoaded` before the first profile loads; Starts still handle players already present.
 Player join: DataService loads (yields) -> `ProfileLoaded` -> MonetizationService applies entitlements,
 ComplianceService checks policy, ZoneService sets world, Gameplay services compute their attributes,
 MultiplierService refreshes. Every handler checks `DataLoaded` first, so early remotes are dropped.
 Player leave: Gameplay drops per-player state (DuelService forfeits, rings released), DataService ends the session.
 
-### Client (`src/client/Main.client.luau`, unchanged)
-Require `UI` then `Effects`; `Init()` all, then `Start()` all. Controllers wait for `DataLoaded == true` and handle
+### Client (`src/client/Main.client.luau`, T-026)
+Wait for `game.Loaded`, then require in order: UI: NotificationController, HudController, TapController,
+ShopController, EggController, PetsController, SettingsController, RewardsController, DuelController; Effects:
+EffectsController, PetFollowController, CinematicController, RagdollController. `Init()` all, then `Start()` all. Controllers wait for `DataLoaded == true` and handle
 map parts streaming in/out (StreamingEnabled is on).
 
 ### Wally packages
@@ -567,3 +651,10 @@ Programmers add requests through their summary; team-lead routes them here. inte
 |---|---|---|---|
 | CR-1 | team-lead (T-003, D-021) | Rev 1 product list (23) and option A: trim `ProductKey`/`GrantKind`, drop Skip Rebirth / Skip World 2 / Auto-Mog Early / coin products, remove the default coin-egg gate | **Done** (sprint 1, commit "T-003"). Notified: gameplay (`tryRebirth(player)` has no `skip`; `GrantKind` "PaidTier"/"Boost" registered by MultiplierService, "FixedPet"/"StarterPack"/"RobuxEgg" by PetService; `COIN_EGGS_POLICY_GATED = false`; `CoinReason` lost "Pack"/"StarterPack"), systems (`AutoMogEarlyOwned` attribute and `skipRebirthsUsed`/`entitlements.autoMogEarly` fields gone; schema stays v1, nothing shipped yet; `RequestPurchase` rules in section 2 #13) |
 | CR-2 | team-lead (T-004) | Shared `RateLimit` and `NumberFormat` in Contracts | **Done** (sprint 1, commit "T-004"). Every C->S handler uses `RateLimit.connect` (or `check` first); every number shown to players goes through `NumberFormat` |
+| CR-a | gameplay (T-010, T-006) | Public `ShopService.refreshAttributes`; EconomyConfig extra fields (TAP_BATCH_MAX, TAP_BURST_SEC, BOSS_BY_ID, ODDS_TOTAL, INVENTORY_HARD_CAP, boss timings, rankForLifetimeMp, bossCoinsPerSec, ...) | **Accepted** (D-032). Listed in 1b and 1c |
+| CR-b | gameplay (T-009, T-011) | Boss ids and rank look ids into the builder handoff | **Accepted** (D-032). In 1f "Builder handoff ids"; ids match `MapLayout.BOSS_IDS` |
+| CR-c | gameplay (T-007) | MultiplierService reads PetService at call time | **Accepted with a condition** (D-032): only through `Gameplay/Util/Deps` at call time (1a); PetService must call `MultiplierService.refresh` after equip/unequip/delete (S2, T-027/T-028) |
+| CR-W1 | world (T-016) | ZoneService adds getBossWorld, getBossStagePosition, getShopStandPosition, getCharacterPosition, getInteractRange | **Accepted** (D-032). Listed in 1b |
+| CR-3 | systems (T-012) | `DataService.saveAndConfirm`; an owner for an `AutoTapUnlocked` attribute | **Accepted** (D-032). saveAndConfirm is Data-internal (3b). `AutoTapUnlocked` added to `Types.PlayerAttr`, writer **IdleService** (S2); DataService switches its SetSetting check to the attribute when IdleService lands |
+| CR-4 | systems (T-014, T-015) | UI field names for BOSSES/TOOLS/RANKS; `MapLayout.getBossStage`, `getShopStands(kind)`; who creates the Tool Stand ProximityPrompt | **Decided** (D-032). Canonical names are EconomyConfig's as merged (1c: `world`, not `worldId`; BOSSES is an array + BOSS_BY_ID). `getBossStage` exists but may return a Model; `getShopStands` will not be added: use `getShopKindOf` on the prompt's ancestors. Builder creates the stand prompts (1f). Follow-up fixes in docs/qa/build-1.md (systems) |
+| QA-F4 | qa (T-024) | Name the EconomyConfig entry fields and BOSSES shape; add TAP_BATCH_MAX to 1c | **Done** (D-032). 1c lists every entry type; pods use `mpPerSec`, bosses `mpNeed`/`coins`/`world`, tools `mpPerTap`/`cost`/`world`, ranks `lifetimeMp`/`lookId` |

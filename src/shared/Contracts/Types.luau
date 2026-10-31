@@ -307,6 +307,7 @@ Types.PlayerAttr = table.freeze({
 	-- IdleService
 	IdleMpPerSec = "IdleMpPerSec", -- number
 	AutoTapRate = "AutoTapRate", -- number taps/s, 0 = off
+	AutoTapUnlocked = "AutoTapUnlocked", -- boolean: Rank >= 3 or Auto Clicker owned (CR-3; read by SetSetting)
 	AutoMogUnlocked = "AutoMogUnlocked", -- boolean
 	-- DuelService
 	InDuel = "InDuel", -- boolean
