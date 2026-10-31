@@ -1,0 +1,20 @@
+# Rojo / Wally output
+/Packages/
+/ServerPackages/
+/DevPackages/
+*.rbxl
+*.rbxlx
+*.rbxl.lock
+*.rbxlx.lock
+sourcemap.json
+roblox.yml
+# Secrets: never commit
+.env
+.env.*
+*.pem
+*.key
+# Local Claude settings and worktrees
+.claude/settings.local.json
+.claude/worktrees/
+# OS
+.DS_Store
