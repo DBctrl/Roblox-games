@@ -148,8 +148,11 @@ local function processReceiptInner(info: { [string]: any }): Enum.ProductPurchas
 	end
 
 	local applied, reason = false, "NotRun"
+	local tierBefore, tierAfter = 0, 0
 	local updated = DataService.update(player, function(live)
+		tierBefore = tonumber(live.entitlements.paidTier) or 0
 		applied, reason = PurchaseRules.applyGrant(live, player, entry, purchaseId, grant)
+		tierAfter = tonumber(live.entitlements.paidTier) or 0
 	end)
 	if reason == "Duplicate" then
 		-- Raced with another grant of the same id between the check above and the update: already applied.
@@ -164,9 +167,9 @@ local function processReceiptInner(info: { [string]: any }): Enum.ProductPurchas
 
 	writeAttributes(player)
 	entitlementsChangedEvent:Fire(player)
-	if entry.grantKind == "RobuxEgg" and not ComplianceService.paidRandomAllowed(player) then
-		print(`MonetizationService: restricted-account receipt for {entry.key} granted as the fixed pet`)
-	end
+	-- Section 5 (CR-G6): which special grant this was. Logged only after the save below holds it.
+	local ladderFallback = entry.grantKind == "PaidTier" and not (tierAfter > tierBefore)
+	local restrictedEgg = entry.grantKind == "RobuxEgg" and not ComplianceService.paidRandomAllowed(player)
 
 	if not confirmSaved(player, purchaseId) then
 		warn(
@@ -176,6 +179,12 @@ local function processReceiptInner(info: { [string]: any }): Enum.ProductPurchas
 	end
 
 	TelemetryService.custom(player, "Purchase", entry.priceRobux)
+	if ladderFallback then
+		TelemetryService.custom(player, "LadderFallback", entry.priceRobux) -- D-019 #3: granted as Hype Snack time
+	end
+	if restrictedEgg then
+		TelemetryService.custom(player, "RestrictedEggGrant", entry.priceRobux) -- 4d: granted as the fixed pet
+	end
 	notify(player, "Success", `Thanks! {entry.displayName} is yours.`)
 	local effect = effectRemote
 	if effect then
