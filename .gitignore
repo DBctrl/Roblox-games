@@ -18,3 +18,5 @@ roblox.yml
 .claude/worktrees/
 # OS
 .DS_Store
+# Local toolchain binaries (cloud session), never committed
+/.tools/

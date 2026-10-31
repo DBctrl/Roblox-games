@@ -1,2 +1,7 @@
-# Tool versions are pinned by running the `rokit add` commands in docs/setup.md on your Mac.
+# Pinned toolchain (same versions as /home/user/.tools/bin in the cloud session, see docs/architecture.md).
+# On the Mac: `rokit install`. To upgrade, `rokit add <tool>@<version>` and log it in docs/decisions.md.
 [tools]
+rojo = "rojo-rbx/rojo@7.4.4"
+wally = "UpliftGames/wally@0.3.2"
+stylua = "JohnnyMorganz/StyLua@2.0.2"
+selene = "Kampfkarren/selene@0.28.0"

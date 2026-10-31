@@ -6,6 +6,20 @@ Both must match this file. Applies lawyer rulings D-016 and D-019 (policy gate o
 ladder, restricted receipts). Prices are still placeholders (gate 5): they live only in config (`EconomyConfig`,
 `ProductCatalog`), so a price change does not change this contract._
 
+## Toolchain (cloud session, sprint 1, D-022)
+Binaries live outside the repo in `/home/user/.tools/bin` (git-ignored): StyLua 2.0.2, Selene 0.28.0, Rojo 7.4.4
+(the same versions are pinned in `rokit.toml` for the Mac). They are not on `PATH`, so call them by absolute path.
+Run from the repo root or your worktree root (the folder that holds `selene.toml`):
+```
+/home/user/.tools/bin/stylua src            # format (stylua --check src to verify only)
+/home/user/.tools/bin/selene src            # lint; must print 0 errors, 0 warnings
+/home/user/.tools/bin/rojo build default.project.json -o /tmp/build.rbxl
+```
+Selene's Roblox std is pre-generated at `~/.cache/selene/roblox.yml` (selene's own download fails behind the TLS
+proxy). Do not delete it; do not commit a `roblox.yml`. The PostToolUse hook only runs the tools if they are on
+`PATH`, so run the two lint commands yourself before each commit. `Packages`/`ServerPackages` are optional paths in
+`default.project.json`, so `rojo build` works before `wally install`. No Studio, Studio MCP or wally in the cloud.
+
 ## 0. Ground rules
 - **Server-authoritative everything.** MP, coins, the multiplier, boss wins, egg rolls, pity, duel scores, duel
   results and rewards are computed on the server only. The client sends **intents** (tap counts, "fight boss X",
@@ -179,10 +193,30 @@ function QuestService.isTutorialDone(player: Player): boolean
 | 22 | Gameplay/EconomyConfig | gameplay | `src/shared/Gameplay` | All GDD 4-7 numbers: tools, pods, bosses, rebirth, ranks, eggs (odds as integer weights summing to 10,000), pets, duel and tap caps, `M_CLAMP`, pure formula functions |
 | 23 | World/MapLayout | world | `src/shared/World` | Tag/attribute accessors for builder's map (nil-safe for streaming) |
 | 24 | Physics/EffectsConfig | physics | `src/shared/Physics` | Ragdoll impulse/duration, pool sizes, particle budgets, camera timings |
+| 21a | Contracts/RateLimit | integration | `src/shared/Contracts` | Per-player, per-remote token bucket for every C->S handler (T-004) |
+| 21b | Contracts/NumberFormat | integration | `src/shared/Contracts` | Pure display formatting: K/M/B/T/Qa, commas, countdowns, multipliers, egg odds (T-004) |
 
-Sprint-1 integration tickets add to Contracts: `ProductCatalog.luau` (ProductKey -> product id, grant kind,
-price label; ids filled after the owner creates and approves the products), `RateLimit.luau` (token bucket used by
-every C->S handler, reads `Remotes.Definitions[name].rate/burst`), `NumberFormat.luau` (K/M/B/T/Qa).
+Sprint 3 adds `Contracts/ProductCatalog.luau` (T-069: ProductKey -> product id, grant kind, price label; ids filled
+after the owner approves prices and creates the products).
+
+```luau
+-- Contracts/RateLimit (server). Limits come from Remotes.Definitions[name].rate/burst; over-limit calls are
+-- dropped silently; per-player state is cleared on PlayerRemoving automatically.
+function RateLimit.connect(name: Remotes.RemoteName, handler: (player: Player, ...any) -> ()): RBXScriptConnection
+	-- preferred: OnServerEvent behind the bucket; the handler still validates every argument
+function RateLimit.check(player: Player, name: Remotes.RemoteName): boolean -- first line of a hand-made handler
+function RateLimit.clear(player: Player): ()
+function RateLimit.newBucket(burst: number, now: number): RateLimit.Bucket  -- pure, for tests
+function RateLimit.take(bucket: RateLimit.Bucket, rate: number, burst: number, now: number): boolean -- pure
+
+-- Contracts/NumberFormat (pure; never returns "nan"/"inf"; truncates, never rounds up)
+function NumberFormat.abbreviate(n: number, decimals: number?): string -- 1500 -> "1.5K", 1e18 -> "1000Qa"
+function NumberFormat.commas(n: number): string        -- 1234567 -> "1,234,567"
+function NumberFormat.duration(seconds: number): string -- 299 -> "4:59", 3903 -> "1:05:03"
+function NumberFormat.multiplier(m: number): string    -- 1.25 -> "x1.25", 12500 -> "x12.5K"
+function NumberFormat.oddsPercent(weight: number): string -- weight out of 10,000: 50 -> "0.5%"
+```
+TapBatch keeps its own per-tap bucket in TapService (taps per second); RateLimit only limits messages per second.
 
 ```luau
 -- EconomyConfig surface other folders rely on (gameplay-programmer fills the values from GDD 4-7)
@@ -270,7 +304,7 @@ excess calls are **dropped silently** (no error reply, so spam earns nothing).
 
 **Handler rules for every C->S remote:** signature `function(player: Player, ...: any)`; `typeof`-check every
 argument and drop on mismatch; numbers must be finite (`x == x` and `math.abs(x) ~= math.huge`) and integers
-where stated; strings length-capped before any other use; rate limit before any work; profile must be loaded
+where stated; strings length-capped before any other use; rate limit before any work (`RateLimit.connect`, section 1c); profile must be loaded
 (`DataLoaded`); never yield before validation; never trust client ids, amounts or prices; rate-limit state is
 cleared on `PlayerRemoving`.
 
@@ -532,3 +566,4 @@ Programmers add requests through their summary; team-lead routes them here. inte
 | # | From | Request | Status |
 |---|---|---|---|
 | CR-1 | team-lead (T-003, D-021) | Rev 1 product list (23) and option A: trim `ProductKey`/`GrantKind`, drop Skip Rebirth / Skip World 2 / Auto-Mog Early / coin products, remove the default coin-egg gate | **Done** (sprint 1, commit "T-003"). Notified: gameplay (`tryRebirth(player)` has no `skip`; `GrantKind` "PaidTier"/"Boost" registered by MultiplierService, "FixedPet"/"StarterPack"/"RobuxEgg" by PetService; `COIN_EGGS_POLICY_GATED = false`; `CoinReason` lost "Pack"/"StarterPack"), systems (`AutoMogEarlyOwned` attribute and `skipRebirthsUsed`/`entitlements.autoMogEarly` fields gone; schema stays v1, nothing shipped yet; `RequestPurchase` rules in section 2 #13) |
+| CR-2 | team-lead (T-004) | Shared `RateLimit` and `NumberFormat` in Contracts | **Done** (sprint 1, commit "T-004"). Every C->S handler uses `RateLimit.connect` (or `check` first); every number shown to players goes through `NumberFormat` |
