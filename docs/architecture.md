@@ -1,7 +1,7 @@
 # Architecture: "Aura Up!" (working title) v1
-_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1.6, 2026-10-31
+_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1.7, 2026-10-31
 (D-017, updated for GDD rev 1 / option A in D-023, sprint-1 contract requests in D-032, sprint-2 contract requests
-in D-051, ProductCatalog in D-054, sprint-3 contract requests and T-071 listing text in D-069, post-commit grant hook in D-071). Built from
+in D-051, ProductCatalog in D-054, sprint-3 contract requests and T-071 listing text in D-069, post-commit grant hook in D-071, CR-I8 merge and inventory-full notice in D-073). Built from
 docs/gdd.md rev 1, approved by the owner (D-021); GDD rev 3 moves the Galaxy Egg to World 1 (D-057, D-058).
 Source of truth for code contracts: `src/shared/Contracts/Remotes.luau` and `src/shared/Contracts/Types.luau`.
 Both must match this file. Applies lawyer rulings D-016 and D-019 (policy gate on Robux eggs only, next-tier-only
@@ -112,8 +112,10 @@ Upward calls are done by **inversion**, never by requiring up:
 -- MonetizationService
 MonetizationService.EntitlementsChanged: RBXScriptSignal -- (player: Player)
 function MonetizationService.registerGrant(kind: T.GrantKind,
-	fn: (player: Player, key: T.ProductKey, data: T.ProfileData) -> boolean): ()
-	-- fn mutates `data` synchronously (no yields, no other DataService calls); false = cannot grant now
+	fn: (player: Player, key: T.ProductKey, data: T.ProfileData) -> (boolean, OnCommitted?)): ()
+	-- fn mutates `data` synchronously (no yields, no other DataService calls); false = cannot grant now (hook
+	-- discarded). Optional 2nd value: OnCommitted = (player: Player) -> (), run once after the save is confirmed
+	-- (CR-I8). A fn typed `-> boolean` (MultiplierService PaidTier/Boost) stays valid: the missing hook is nil.
 function MonetizationService.getPaidTier(player: Player): number      -- 0..5 (0 = none, 5 = x32)
 function MonetizationService.hasVip(player: Player): boolean
 function MonetizationService.owns(player: Player, key: T.ProductKey): boolean -- permanent entitlements only
@@ -975,7 +977,7 @@ Programmers add requests through their summary; team-lead routes them here. inte
 | QA-F9 | qa (T-081) via systems | MonetizationService test seams `processReceipt`, `grantEntry`, `getGrant` | **Accepted** (D-069), listed in 1b. **Done** (sprint-3 fix, e9538f4) |
 | QA-F10 | qa (T-081) | 3c says `NotYetProcessed` | **Done** (D-069): 3c now says `NotProcessedYet`; code already used the right item |
 | QA-F13 | qa (T-068) | Pure duel/daily helpers and public duel/reward entries | **Decided** (D-069): the merged names are canonical: `Util/DuelMath` (not DuelRules), `Util/DailyMath` (not DailyCalendar), `RewardService.claim` (not claimDaily); `DuelService.challenge` / `respond` / `rematch` match. **Done** (sprint-3 fix, fa196fc): Duel and DailyReward specs retargeted with adapters |
-| CR-I8 | integration (QA-14, sprint-3 fix round 2) | MonetizationService has no post-save hook, so grant fns send client messages (RobuxEgg `HatchResult`, FixedPet / StarterPack "Success" toasts) before the receipt save is confirmed; a failed save that is retried and granted later leaves the player with only the early message (S3) | **Decided** (D-071), shape below. **Open: systems fix** (fire the hook) and **gameplay fix** (move notifications into it) |
+| CR-I8 | integration (QA-14, sprint-3 fix round 2) | MonetizationService has no post-save hook, so grant fns send client messages (RobuxEgg `HatchResult`, FixedPet / StarterPack "Success" toasts) before the receipt save is confirmed; a failed save that is retried and granted later leaves the player with only the early message (S3) | **Decided** (D-071), shape below. **Done** (D-073): systems 142a862 (hook run after the confirmed save), gameplay d1596d6 (PetService notifications moved into the hook), merged on main. Inventory-full notice: see CR-I8a below |
 
 **CR-I8 post-commit grant hook (D-071).** The grant fn may return a second value, a hook that runs only after the
 save holding the PurchaseId is confirmed:
@@ -1004,3 +1006,21 @@ export type GrantFn = (player: Player, key: Types.ProductKey, data: ProfileData)
    state, not a promise to the player.
 6. qa: check_grants should flag a grant fn body that calls `FireClient`, `notify` or `task.defer`/`task.spawn` with
    client work (QA follow-up, not blocking).
+
+**CR-I8 merge check (D-073).** `Deps.GrantFn`/`Deps.OnCommitted` and `PurchaseRules.GrantFn`/`PurchaseRules.OnCommitted`
+are the same text; `applyGrant` passes the hook back only when the grant was merged and only if it is a function.
+MultiplierService's `grantPaidTier`/`grantBoost` still return a plain `boolean`: at runtime `pcall` yields `nil` as
+the hook, so they keep working; in types a shorter return pack whose missing value is optional is accepted
+(`TODO(verify-api)`: confirm with luau-lsp / Studio Script Analysis on the Mac, no Luau type checker in the cloud).
+Their `task.defer(refresh, player)` is a state refresh (rule 5), not a client message, so they need no hook.
+
+**CR-I8a inventory-full notice (D-073).** PetService's `refuseFull` now only logs, so a refused pet receipt shows the
+player nothing. Prevention is already in place: `PurchaseRules.canPrompt` refuses RobuxEgg (needs `count` free
+slots), FixedPet and StarterPack (1 free slot) against `INVENTORY_CAP` (60) before the prompt, while the grant fns
+refuse only past `INVENTORY_HARD_CAP` (66). A refusal needs 6+ extra pets gained between prompt and receipt, so in
+practice only a receipt retried into a later session with a fuller inventory. Decision: a notice is still sent, but
+by **MonetizationService**, never by a grant fn: when `applyGrant` returns `GrantRefused`, send one generic Notify
+`"Error"`, "Your purchase is pending. Free some pet slots, then rejoin to receive it.", at most once per PurchaseId
+per server (a `refusedNotified[purchaseId]` set cleared on PlayerRemoving), so Roblox's retries never spam toasts.
+It promises nothing was granted, so it is safe before any save. **Open: systems fix (Mac session item)**, small,
+`src/server/Data/MonetizationService.luau` only; gameplay needs no change.
