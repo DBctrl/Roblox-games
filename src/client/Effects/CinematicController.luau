@@ -5,6 +5,8 @@
 -- this only frames it. Other players within RankUp.nearbyDistance of the camera see the spotlight, confetti and
 -- pop on that character, with no camera change. The local orbit has a Skip button and always gives the camera
 -- back (type, subject, field of view) when it ends, is skipped, or the character dies.
+-- Hatch reveal (T-045, GDD 5): about 2 s egg wobble, flash and one card per pet from the server's `HatchResult`
+-- (x3 hatch = 3 cards). Tap anywhere skips to the cards, a second tap closes. Never rolls on the client.
 -- It never sends a remote and never reads or writes game state. One render-step function drives every moment
 -- (no tweens, no per-moment connections). Rigs (beam, lamp, highlight) and confetti emitters are pooled and
 -- built in Init.
@@ -459,6 +461,326 @@ local function skipRankUp()
 	end
 end
 
+-- Hatch reveal (T-045) --------------------------------------------------------------------------------------
+-- Plays from `HatchResult` (sent to the hatcher only). It shows exactly the pets the server rolled, in order;
+-- nothing here rolls, picks or changes a result. EggController (UI) shows the same payload in its own panel.
+
+type Reveal = {
+	petId: string,
+	rarity: string,
+	isNew: boolean,
+	autoDeleted: boolean,
+	pity: boolean,
+}
+
+type Card = {
+	frame: Frame,
+	scale: UIScale,
+	stroke: UIStroke,
+	ball: Frame,
+	name: TextLabel,
+	rarity: TextLabel,
+	tag: TextLabel,
+}
+
+local hatchGui: ScreenGui
+local hatchCatcher: TextButton -- full-screen dim; any tap/click on it is Skip (and never reaches TapController)
+local hatchEgg: Frame
+local hatchFlash: Frame
+local hatchHint: TextLabel
+local cards: { Card } = {}
+local hatchQueue: { { Reveal } } = {}
+local hatchConn: RBXScriptConnection? = nil
+local hatchReveals: { Reveal } = {}
+local hatchStartedAt = 0
+local hatchEndsAt = 0
+
+local function easeOutBack(x: number): number
+	local c1 = 1.70158
+	local c3 = c1 + 1
+	local u = math.clamp(x, 0, 1) - 1
+	return 1 + c3 * u * u * u + c1 * u * u
+end
+
+local function rarityColor(rarity: string): Color3
+	return EffectsConfig.RarityColors[rarity] or EffectsConfig.DEFAULT_RARITY_COLOR
+end
+
+local function petDisplayName(petId: string): string
+	local pet = EconomyConfig.PETS[petId]
+	return if pet and type(pet.name) == "string" then pet.name else petId
+end
+
+local function corner(parent: Instance, scale: number)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(scale, 0)
+	c.Parent = parent
+end
+
+local function buildCard(i: number): Card
+	local frame = Instance.new("Frame")
+	frame.Name = `Card_{i}`
+	frame.AnchorPoint = Vector2.new(0.5, 0.5)
+	frame.Size = UDim2.fromScale(0.24, 0.42)
+	frame.BackgroundColor3 = Color3.fromRGB(28, 24, 44)
+	frame.Visible = false
+	corner(frame, 0.08)
+	local aspect = Instance.new("UIAspectRatioConstraint")
+	aspect.AspectRatio = 0.72
+	aspect.Parent = frame
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0
+	scale.Parent = frame
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 4
+	stroke.Parent = frame
+
+	local ball = Instance.new("Frame")
+	ball.Name = "Pet"
+	ball.AnchorPoint = Vector2.new(0.5, 0.5)
+	ball.Position = UDim2.fromScale(0.5, 0.34)
+	ball.Size = UDim2.fromScale(0.5, 0.5)
+	local ballAspect = Instance.new("UIAspectRatioConstraint")
+	ballAspect.AspectRatio = 1
+	ballAspect.Parent = ball
+	corner(ball, 0.5)
+	ball.Parent = frame
+
+	local name = makeLabel("PetName", UDim2.fromScale(0.9, 0.16), UDim2.fromScale(0.5, 0.68), 30)
+	name.Parent = frame
+	local rarity = makeLabel("Rarity", UDim2.fromScale(0.9, 0.1), UDim2.fromScale(0.5, 0.8), 22)
+	rarity.Parent = frame
+	local tag = makeLabel("Tag", UDim2.fromScale(0.9, 0.09), UDim2.fromScale(0.5, 0.91), 20)
+	tag.TextColor3 = Color3.fromRGB(255, 240, 120)
+	tag.Parent = frame
+
+	return {
+		frame = frame,
+		scale = scale,
+		stroke = stroke,
+		ball = ball,
+		name = name,
+		rarity = rarity,
+		tag = tag,
+	}
+end
+
+local function buildHatchGui()
+	local cfg = EffectsConfig.Hatch
+	hatchGui = Instance.new("ScreenGui")
+	hatchGui.Name = "HatchReveal"
+	hatchGui.ResetOnSpawn = false
+	hatchGui.IgnoreGuiInset = true
+	hatchGui.DisplayOrder = 45
+	hatchGui.Enabled = false
+
+	hatchCatcher = Instance.new("TextButton")
+	hatchCatcher.Name = "Dim"
+	hatchCatcher.Size = UDim2.fromScale(1, 1)
+	hatchCatcher.BackgroundColor3 = Color3.new(0, 0, 0)
+	hatchCatcher.BackgroundTransparency = 0.45
+	hatchCatcher.AutoButtonColor = false
+	hatchCatcher.Text = ""
+	hatchCatcher.Parent = hatchGui
+
+	hatchEgg = Instance.new("Frame")
+	hatchEgg.Name = "Egg"
+	hatchEgg.AnchorPoint = Vector2.new(0.5, 0.5)
+	hatchEgg.Position = UDim2.fromScale(0.5, 0.5)
+	hatchEgg.Size = UDim2.fromScale(0.2, 0.36)
+	hatchEgg.BackgroundColor3 = cfg.eggColor
+	local eggAspect = Instance.new("UIAspectRatioConstraint")
+	eggAspect.AspectRatio = 0.78
+	eggAspect.Parent = hatchEgg
+	corner(hatchEgg, 0.5)
+	local eggStroke = Instance.new("UIStroke")
+	eggStroke.Thickness = 4
+	eggStroke.Color = Color3.fromRGB(255, 255, 255)
+	eggStroke.Parent = hatchEgg
+	hatchEgg.Parent = hatchGui
+
+	for i = 1, cfg.maxReveals do
+		local card = buildCard(i)
+		card.frame.Parent = hatchGui
+		cards[i] = card
+	end
+
+	hatchFlash = Instance.new("Frame")
+	hatchFlash.Name = "Flash"
+	hatchFlash.Size = UDim2.fromScale(1, 1)
+	hatchFlash.BackgroundColor3 = Color3.new(1, 1, 1)
+	hatchFlash.BackgroundTransparency = 1
+	hatchFlash.Active = false
+	hatchFlash.Parent = hatchGui
+
+	hatchHint = makeLabel("Hint", UDim2.fromScale(0.6, 0.05), UDim2.fromScale(0.5, 0.92), 22)
+	hatchHint.Text = "Tap to skip"
+	hatchHint.Parent = hatchGui
+end
+
+-- Pure-ish payload check: keeps only well-formed entries, at most Hatch.maxReveals, in server order.
+local function readReveals(payload: unknown): { Reveal }
+	local out: { Reveal } = {}
+	if type(payload) ~= "table" then
+		return out
+	end
+	local pets = (payload :: { [string]: unknown }).pets
+	if type(pets) ~= "table" then
+		return out
+	end
+	for _, entry in ipairs(pets :: { unknown }) do
+		if type(entry) == "table" then
+			local e = entry :: { [string]: unknown }
+			local petId = e.petId
+			if type(petId) == "string" and #petId <= 32 then
+				local pet = EconomyConfig.PETS[petId]
+				local rarity = if type(e.rarity) == "string"
+					then e.rarity :: string
+					elseif pet then pet.rarity
+					else "Common"
+				table.insert(out, {
+					petId = petId,
+					rarity = rarity,
+					isNew = e.isNew == true,
+					autoDeleted = e.autoDeleted == true,
+					pity = e.pity == true,
+				})
+				if #out >= EffectsConfig.Hatch.maxReveals then
+					break
+				end
+			end
+		end
+	end
+	return out
+end
+
+local function fillCards(reveals: { Reveal })
+	local n = #reveals
+	for i, card in cards do
+		local r = reveals[i]
+		card.frame.Visible = false
+		card.scale.Scale = 0
+		if r then
+			local color = rarityColor(r.rarity)
+			card.frame.Position = UDim2.fromScale(0.5 + (i - (n + 1) / 2) * 0.27, 0.5)
+			card.stroke.Color = color
+			card.ball.BackgroundColor3 = color
+			card.ball.BackgroundTransparency = if r.autoDeleted then 0.6 else 0
+			card.name.Text = petDisplayName(r.petId)
+			card.rarity.Text = r.rarity
+			card.rarity.TextColor3 = color
+			local tags: { string } = {}
+			if r.pity then
+				table.insert(tags, "PITY!")
+			end
+			if r.isNew then
+				table.insert(tags, "NEW!")
+			end
+			if r.autoDeleted then
+				table.insert(tags, "Auto-deleted")
+			end
+			card.tag.Text = table.concat(tags, "  ")
+		end
+	end
+end
+
+local startNextHatch: () -> ()
+
+local function finishHatch()
+	local conn = hatchConn
+	if conn then
+		conn:Disconnect()
+		hatchConn = nil
+	end
+	hatchGui.Enabled = false
+	startNextHatch()
+end
+
+local function stepHatch()
+	local cfg = EffectsConfig.Hatch
+	local now = os.clock()
+	if now >= hatchEndsAt then
+		finishHatch()
+		return
+	end
+	local t = now - hatchStartedAt
+	local revealStart = EffectsConfig.hatchTimes(#hatchReveals)
+
+	-- Egg wobble that grows, then the egg is gone under the flash.
+	if t < cfg.wobbleTime then
+		local k = t / cfg.wobbleTime
+		hatchEgg.Visible = true
+		hatchEgg.Rotation = math.sin(t * cfg.wobbleSpeed * (0.5 + k)) * cfg.wobbleDegrees * k
+	else
+		hatchEgg.Visible = false
+	end
+	if t >= cfg.wobbleTime and t < revealStart then
+		hatchFlash.BackgroundTransparency = (t - cfg.wobbleTime) / cfg.flashTime
+	else
+		hatchFlash.BackgroundTransparency = 1
+	end
+
+	for i, card in cards do
+		if hatchReveals[i] then
+			local popStart = revealStart + (i - 1) * cfg.revealStagger
+			if t >= popStart then
+				card.frame.Visible = true
+				card.scale.Scale = easeOutBack((t - popStart) / cfg.popTime)
+			end
+		end
+	end
+end
+
+startNextHatch = function()
+	local reveals = table.remove(hatchQueue, 1)
+	if not reveals then
+		return
+	end
+	hatchReveals = reveals
+	fillCards(reveals)
+	local _, total = EffectsConfig.hatchTimes(#reveals)
+	hatchStartedAt = os.clock()
+	hatchEndsAt = hatchStartedAt + total
+	hatchEgg.Rotation = 0
+	hatchFlash.BackgroundTransparency = 1
+	hatchGui.Enabled = true
+	hatchConn = RunService.RenderStepped:Connect(stepHatch)
+end
+
+-- First press: jump to all cards shown, then close after Hatch.skipHoldTime. Second press: close now.
+local function skipHatch()
+	if not hatchConn then
+		return
+	end
+	local cfg = EffectsConfig.Hatch
+	local now = os.clock()
+	local revealStart = EffectsConfig.hatchTimes(#hatchReveals)
+	local allShown = revealStart + (#hatchReveals - 1) * cfg.revealStagger + cfg.popTime
+	if now - hatchStartedAt >= allShown then
+		hatchEndsAt = now
+	else
+		hatchStartedAt = now - allShown
+		hatchEndsAt = math.min(hatchEndsAt, now + cfg.skipHoldTime)
+	end
+	stepHatch()
+end
+
+local function onHatchResult(payload: unknown)
+	local reveals = readReveals(payload)
+	if #reveals == 0 then
+		return
+	end
+	if #hatchQueue >= EffectsConfig.Hatch.maxQueued then
+		return -- the pets are in the inventory anyway; never stack long queues of animations
+	end
+	table.insert(hatchQueue, reveals)
+	if hatchConn then
+		skipHatch() -- a newer hatch is waiting: hurry the current one along
+	else
+		startNextHatch()
+	end
+end
+
 local function onPlayEffect(effect: unknown, payload: unknown)
 	if effect ~= "RankUp" or type(payload) ~= "table" then
 		return
@@ -482,12 +804,17 @@ function CinematicController:Init()
 	folder.Parent = Workspace
 	buildRankGui()
 	skipButton.Activated:Connect(skipRankUp)
+	buildHatchGui()
+	hatchCatcher.Activated:Connect(skipHatch)
 end
 
 function CinematicController:Start()
 	-- WaitForChild calls yield, so they run here, never in Init.
-	rankGui.Parent = localPlayer:WaitForChild("PlayerGui")
+	local playerGui = localPlayer:WaitForChild("PlayerGui")
+	rankGui.Parent = playerGui
+	hatchGui.Parent = playerGui
 	Remotes.getEvent("PlayEffect").OnClientEvent:Connect(onPlayEffect)
+	Remotes.getEvent("HatchResult").OnClientEvent:Connect(onHatchResult)
 	localPlayer.CharacterRemoving:Connect(function()
 		local m = moments[localPlayer.UserId]
 		if m then

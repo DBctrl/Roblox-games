@@ -163,6 +163,32 @@ EffectsConfig.RankUp = table.freeze({
 	titleText = "RANK UP!",
 })
 
+-- Hatch reveal (T-045, GDD 5: about 2 s, skippable). Shows only what the server's HatchResult says.
+EffectsConfig.Hatch = table.freeze({
+	wobbleTime = 1.0, -- egg wobble before it cracks
+	flashTime = 0.15, -- white flash
+	revealStagger = 0.12, -- seconds between the cards of a x3 hatch
+	popTime = 0.25, -- each card's scale-in
+	holdTime = 0.75, -- cards stay this long after the last pop (total about 2 s for x1, 2.2 s for x3)
+	skipHoldTime = 0.6, -- after Skip, the cards show this long (or until Skip/tap is pressed again)
+	maxReveals = 3, -- HatchEgg count is 1 or 3
+	maxQueued = 3, -- HatchResults waiting behind the current one; more are dropped (the inventory still has them)
+	wobbleDegrees = 14,
+	wobbleSpeed = 22, -- radians/s, grows over the wobble
+	eggColor = Color3.fromRGB(255, 236, 200),
+})
+
+-- Rarity colors for the hatch cards and fallback pet spheres.
+EffectsConfig.RarityColors = table.freeze({
+	Common = Color3.fromRGB(200, 200, 210),
+	Uncommon = Color3.fromRGB(110, 220, 120),
+	Rare = Color3.fromRGB(80, 160, 255),
+	Epic = Color3.fromRGB(190, 100, 255),
+	Legendary = Color3.fromRGB(255, 190, 40),
+	Mythic = Color3.fromRGB(255, 80, 140),
+} :: { [string]: Color3 })
+EffectsConfig.DEFAULT_RARITY_COLOR = Color3.fromRGB(230, 230, 240)
+
 -- Pure: particle count for a coin burst of `amount` coins/MP. Safe on NaN, inf and negatives.
 function EffectsConfig.coinParticles(amount: number?): number
 	local c = EffectsConfig.CoinBurst
@@ -197,6 +223,15 @@ function EffectsConfig.orbitPosition(center: Vector3, startAngle: number, elapse
 		+ Vector3.new(math.cos(angle) * cfg.orbitRadius, cfg.orbitHeight, math.sin(angle) * cfg.orbitRadius)
 end
 
+-- Pure: (seconds until the cards start to pop, total length) of the reveal for a hatch of `count` pets.
+function EffectsConfig.hatchTimes(count: number): (number, number)
+	local h = EffectsConfig.Hatch
+	local n = math.clamp(math.floor(count), 1, h.maxReveals)
+	local revealStart = h.wobbleTime + h.flashTime
+	local lastPop = revealStart + (n - 1) * h.revealStagger + h.popTime
+	return revealStart, lastPop + h.holdTime
+end
+
 -- Asserts the budgets hold together (qa can call this in tests).
 function EffectsConfig.validate()
 	for name, spec: PoolSpec in EffectsConfig.Pools do
@@ -228,6 +263,10 @@ function EffectsConfig.validate()
 		r.confettiPerBurst * #r.confettiBursts + worstCase <= EffectsConfig.MAX_PARTICLES_ALIVE,
 		"rank-up confetti + tap sparkles exceed cap"
 	)
+	-- Hatch: about 2 s for every hatch size.
+	local _, total1 = EffectsConfig.hatchTimes(1)
+	local _, total3 = EffectsConfig.hatchTimes(EffectsConfig.Hatch.maxReveals)
+	assert(total1 >= 1.5 and total3 <= 2.6, "hatch animation is not about 2 s")
 end
 
 return table.freeze(EffectsConfig)
