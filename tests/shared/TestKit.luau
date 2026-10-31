@@ -92,6 +92,37 @@ function TestKit.field(entry: any, names: { string }, label: string): any
 	error(`{label}: none of the fields {table.concat(names, "/")} found`, 2)
 end
 
+-- Path of the first difference between two plain-data values ("" if equal). Tables compare key by key, both ways.
+function TestKit.diff(a: any, b: any, path: string?): string?
+	local here = path or "$"
+	if type(a) ~= "table" or type(b) ~= "table" then
+		if a == b or (a ~= a and b ~= b) then
+			return nil
+		end
+		return `{here}: {show(a)} vs {show(b)}`
+	end
+	for k, v in a do
+		local d = TestKit.diff(v, b[k], `{here}.{tostring(k)}`)
+		if d then
+			return d
+		end
+	end
+	for k, v in b do
+		if a[k] == nil then
+			return `{here}.{tostring(k)}: nil vs {show(v)}`
+		end
+	end
+	return nil
+end
+
+-- Errors with the first difference if `actual` and `expected` are not deep-equal.
+function TestKit.deepEq(actual: any, expected: any, label: string)
+	local d = TestKit.diff(actual, expected)
+	if d then
+		error(`{label}: differs at {d}`, 2)
+	end
+end
+
 -- `require` that returns nil instead of erroring, so a spec can SKIP when a module is not merged yet.
 function TestKit.tryRequire(parent: Instance?, path: { string }): any
 	local node: Instance? = parent

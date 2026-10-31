@@ -1,0 +1,18 @@
+-- qa selftest fixture: odds UI reads weights (no random), effects use random far from any weights.
+local function oddsText(egg)
+	local lines = {}
+	for _, entry in egg.pets do
+		table.insert(lines, string.format("%.2f%%", entry.weight / EconomyConfig.ODDS_TOTAL * 100))
+	end
+	return lines
+end
+gui:SetAttribute("Open", true)
+Remotes.getEvent("HatchEgg"):FireServer(eggId, count)
+local a = 1
+local b = 2
+local c = 3
+local e = 4
+local f = 5
+local g = 6
+local h = 7
+local jitter = Random.new():NextNumber(-1, 1)
