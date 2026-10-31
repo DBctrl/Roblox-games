@@ -501,7 +501,7 @@ end
 
 -- Starter Pack: Sparkle Pup + 30 min Hype Snack + Rookie Shades + the once flag. No coins, no pod, no egg.
 -- The once rule is a prompt gate (MonetizationService); a second receipt that still arrives gets the same contents
--- again, so Robux is never taken for nothing (D-056).
+-- again, so Robux is never taken for nothing (D-063).
 local function grantStarterPack(player: Player, key: Types.ProductKey, data: ProfileData): boolean
 	local entry = ProductCatalog.get(key)
 	local petId = entry and entry.petId
@@ -622,11 +622,11 @@ local function grantRobuxEgg(player: Player, key: Types.ProductKey, data: Profil
 end
 
 -- Exposed for qa's GDD 8g firewall test (walks every grant fn with a fake profile).
-PetService.grants = {
+PetService.grants = table.freeze({
 	FixedPet = grantFixedPet,
 	StarterPack = grantStarterPack,
 	RobuxEgg = grantRobuxEgg,
-}
+})
 
 -- Lifecycle -------------------------------------------------------------------------------------------------
 

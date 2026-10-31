@@ -258,7 +258,7 @@ local pets: { [string]: Pet } = {
 	GelPenguin = { name = "Gel Penguin", rarity = "Uncommon", bonus = 0.35 },
 	DiscoDuck = { name = "Disco Duck", rarity = "Rare", bonus = 0.60 },
 	SparkleOwl = { name = "Sparkle Owl", rarity = "Epic", bonus = 1.20 },
-	GoldenGlowCat = { name = "Golden Glow Cat", rarity = "Legendary", bonus = 3.00 },
+	GoldenGlowCat = { name = "Golden Glow Cat", rarity = "Legendary", bonus = 3.20 }, -- owner D-060 Q11
 	-- Star Egg (W1, Robux; rolled in T-073)
 	StarlightCorgi = { name = "Starlight Corgi", rarity = "Rare", bonus = 1.00 },
 	AuraLion = { name = "Aura Lion", rarity = "Epic", bonus = 1.80 },

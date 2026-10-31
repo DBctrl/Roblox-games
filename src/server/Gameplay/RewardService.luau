@@ -17,6 +17,7 @@ local EconomyConfig = require(ReplicatedStorage.Shared.Gameplay.EconomyConfig)
 local MultiplierService = require(script.Parent.MultiplierService)
 local NumberFormat = require(ReplicatedStorage.Shared.Contracts.NumberFormat)
 local PetService = require(script.Parent.PetService)
+local RankService = require(script.Parent.RankService)
 local RateLimit = require(ReplicatedStorage.Shared.Contracts.RateLimit)
 local Remotes = require(ReplicatedStorage.Shared.Contracts.Remotes)
 local Types = require(ReplicatedStorage.Shared.Contracts.Types)
@@ -116,6 +117,15 @@ function RewardService.claim(player: Player): (boolean, string?)
 	end)
 	if not claimed then
 		return false, "AlreadyClaimed"
+	end
+	-- The new cosmetic is a fit CharacterService wears from the profile; re-apply the current look so it shows now,
+	-- not only after the next respawn or rank-up.
+	if reward.cosmetic then
+		local character = Deps.character()
+		local setLook = character and character.setLook
+		if setLook then
+			setLook(player, EconomyConfig.RANKS[RankService.getRank(player)].lookId)
+		end
 	end
 
 	-- 2) Pay the day's free reward.
