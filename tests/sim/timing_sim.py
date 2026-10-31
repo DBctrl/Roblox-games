@@ -21,6 +21,7 @@ Model (one free player, PvE, time step 0.05 s):
 - Basic Egg: one hatch, its expected pet bonus (EV of the odds table) is added to PetMult.
 - Rank 3 unlocks free Auto-Tap (3 taps/s, GDD 4.6); total accepted taps stay <= 12/s.
 - First rebirth = the moment coins >= rebirthCost(1).
+Targets: two-sided bands pass within BAND_TOLERANCE (15 s, D-052) of either edge; "< X" caps are strict.
 """
 
 from __future__ import annotations
@@ -43,6 +44,9 @@ AUTO_TAP_RATE = 3.0  # GDD 4.6 free Auto-Tap
 AUTO_TAP_RANK = 3
 DT = 0.05
 LIMIT = 40 * 60.0
+# D-052: a two-sided band (lo > 0) passes within this many seconds outside either edge, because the sim's
+# modelling precision (walk times, 0.05 s step, EV pets) is coarser than a few seconds. "< X" caps stay strict.
+BAND_TOLERANCE = 15.0
 
 # GDD targets (4.7 Check column, 9) in seconds: (label, event key, max seconds or (min, max))
 # (label, event, (lo, hi) seconds, taps/s the target applies to; None = every rate)
@@ -329,9 +333,12 @@ def main() -> int:
             if pname != "4.7 order" or (rates is not None and int(tps) not in rates):
                 continue
             v = ev.get(key)
-            ok = v is not None and lo <= v <= hi
+            tol = BAND_TOLERANCE if lo > 0 else 0.0
+            strict_ok = v is not None and lo <= v <= hi
+            ok = v is not None and lo - tol <= v <= hi + tol
             failed += 0 if ok else 1
-            cells.append(f"{int(tps)}/s {plabel}: {fmt(v)} {'PASS' if ok else 'FAIL'}")
+            verdict = "PASS" if strict_ok else (f"PASS (within {tol:g} s of edge, D-052)" if ok else "FAIL")
+            cells.append(f"{int(tps)}/s {plabel}: {fmt(v)} {verdict}")
         print(f"- {label}: " + "; ".join(cells))
     print(f"\nBasic Egg pet EV: +{g['basic_ev']:.4f}; rebirth 1 cost: {g['rebirth_cost_1']:.0f}")
     return 1 if failed else 0
