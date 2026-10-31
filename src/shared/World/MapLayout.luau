@@ -62,7 +62,9 @@ Mog Rings (T-059, sprint 3), World 1 only in v1. Builder must create in Glow Tow
     FreshSpawn, CombRookie, GlowStarter, DripApprentice, StyleScout, MainCharacter,
     Trendsetter, AuraFarmer, Icon, SpotlightLegend, StarMogger, SupremeMogger
   Fits (FIT_IDS): StarterFit (first boss win), RookieShades (Starter Pack), GoldenGlowFit,
-    NeonIconFit (exclusive cosmetics), VipSparkleAura (VIP)
+    NeonIconFit (exclusive cosmetics), VipSparkleAura (VIP),
+    WeekStreakAura (Day-7 daily reward: a cartoon aura accessory, Handle only, at
+    ServerStorage.Assets.Looks.WeekStreakAura)
 ===================================================================================================
 
 WorldId: 1 = Glow Town, 2 = Neon Runway. Positions: follow WORLDS below (studs, Y = ground level).
@@ -150,6 +152,7 @@ MapLayout.FIT_IDS = table.freeze({
 	"NeonIconFit",
 	"VipSparkleAura",
 	"RookieShades",
+	"WeekStreakAura",
 	"StarterFit",
 })
 
