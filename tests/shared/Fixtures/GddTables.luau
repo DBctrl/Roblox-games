@@ -82,7 +82,7 @@ GddTables.EGGS = {
 			{ name = "Gel Penguin", rarity = "Uncommon", bonus = 0.35, weight = 3500 },
 			{ name = "Disco Duck", rarity = "Rare", bonus = 0.6, weight = 1500 },
 			{ name = "Sparkle Owl", rarity = "Epic", bonus = 1.2, weight = 450 },
-			{ name = "Golden Glow Cat", rarity = "Legendary", bonus = 3, weight = 50 },
+			{ name = "Golden Glow Cat", rarity = "Legendary", bonus = 3.2, weight = 50 },
 		},
 	},
 	{

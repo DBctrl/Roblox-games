@@ -1,5 +1,6 @@
 --!strict
 -- GDD rev 2 section 5 egg tables, copied by hand from docs/gdd.md (T-046). Owned by qa.
+-- Golden Glow Cat bonus 3.20 per D-060 (owner, GDD Q11).
 -- Pets are matched by display name because pet ids are not fixed by docs/architecture.md (1c: `PETS` is keyed by
 -- a PetId string chosen in T-027). `pct` is the listed percentage; the config weight must be pct x 100.
 -- Lean v1 (D-034): Basic, Shiny, Star and Galaxy ship in sprint 2; Neon and Runway move to T-090 (Update 1).
@@ -39,7 +40,7 @@ local GddEggs: { [string]: GddEgg } = {
 			{ name = "Gel Penguin", rarity = "Uncommon", bonus = 0.35, pct = 35 },
 			{ name = "Disco Duck", rarity = "Rare", bonus = 0.60, pct = 15 },
 			{ name = "Sparkle Owl", rarity = "Epic", bonus = 1.20, pct = 4.5 },
-			{ name = "Golden Glow Cat", rarity = "Legendary", bonus = 3.00, pct = 0.5 },
+			{ name = "Golden Glow Cat", rarity = "Legendary", bonus = 3.20, pct = 0.5 },
 		},
 	},
 	StarEgg = {
