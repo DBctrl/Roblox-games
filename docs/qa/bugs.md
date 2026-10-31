@@ -151,6 +151,34 @@ named role. Line numbers are for `main` at `dde2064` (build 1)._
 - **Expected:** `world = 1`, odds unchanged. The qa fixture `tests/shared/Fixtures/GddEggs.luau` is updated, and
   `PetRoll.spec` now checks `world` for Robux eggs too, so that test FAILs until EconomyConfig changes.
 
+### QA-F12 [gameplay] `EconomyConfig.duelScore` is missing (architecture 4c names it)   S3 (sprint 3, T-049)
+- **Found by:** qa (T-068). `src/shared/Gameplay/EconomyConfig.luau` has the DUEL_* constants (lines 116-127) but
+  no `duelScore` function.
+- **Ask:** add `EconomyConfig.duelScore(taps, ownRank, oppRank): number` = taps x (1 + DUEL_RANK_STEP x
+  min(ownRank, oppRank + DUEL_RANK_EDGE)), exactly 3 parameters, and have DuelService score only through it.
+- **Tests:** `Duel.spec.luau` checks the formula, the +6% edge cap, finite output on junk input, and that the
+  function takes 3 parameters, so no pet, paid or boost input can be passed (`debug.info(fn, "a")`). It SKIPs until
+  then.
+
+### QA-F13 [gameplay] Duel and daily reward rules have no server-callable or pure entry   S3 (sprint 3, T-049/T-050/T-052)
+- **Found by:** qa (T-068). Architecture 1b gives DuelService only `isInDuel` and RewardService no functions, so
+  the caps, tap clamp, claim-twice and clock-skew rules can only be reached from a client remote.
+- **Ask (gameplay-internal helpers, as with `Util/PetRoll` in QA-F7; the public ones go to integration as a CR):**
+  - `Gameplay/Util/DuelRules.rewardAllowed(rewardLog, now, oppUserId): boolean` and
+    `DuelRules.acceptTaps(count, now, lastAccepted, activeStart, activeEnd, total): number` (pure).
+  - `Gameplay/Util/DailyCalendar.claim(daily, nowUnix): (boolean, newDaily?)` and
+    `DailyCalendar.reward(day, bestCoinsPerSec, vip)` (pure).
+  - Public: `DuelService.challenge(player, targetUserId)`, `respond(player, challengerUserId, accept)`,
+    `rematch(player, accept)`, and `RewardService.claimDaily(player)`; each remote handler calls one of them after
+    its type checks.
+- **Rules the tests pin (please confirm or tell qa):** a `rewardLog` entry with a future time (clock skew between
+  servers) still counts against the caps. A claim on a server whose clock is behind `lastClaimDay` is refused and
+  never lowers `lastClaimDay` or resets the streak. Rematches have no count cap of their own: the 2-per-opponent
+  per 15 min reward cap is what limits a rematch loop (GDD 6).
+- **Tests:** `Duel.spec.luau`, `DailyReward.spec.luau` (SKIP until then). `python3 -I tests/static/check_duel.py`
+  checks forfeit on leave, ring release, the reward caps, self-duel, tap clamp, no pet/paid/boost reads, and the
+  daily claim's server clock and VIP rule now (PENDING until the services exist).
+
 ## Closed
 
 ### QA-6 [qa] Static checker false positives   S3   (fixed in build 1 check)

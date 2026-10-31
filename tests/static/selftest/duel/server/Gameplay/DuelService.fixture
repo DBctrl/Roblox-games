@@ -1,0 +1,25 @@
+-- check_duel.py selftest: every DuelService check must FAIL here (6 problems).
+local DuelService = {}
+
+local function score(player, taps)
+	local pets = PetService.getPetMultiplierSum(player)
+	local data = DataService.getData(player)
+	return taps * (1 + pets) * data.entitlements.paidTier + data.boosts.hypeSec
+end
+
+local function onTaps(player, count)
+	TapService.addMp(player, count, "Duel")
+	duels[player].taps += count
+end
+
+local function reward(winner)
+	DataService.addCoins(winner, 120 * BossService.bestCoinsPerSec(winner), "DuelReward")
+end
+
+function DuelService.challenge(player, targetUserId)
+	local target = Players:GetPlayerByUserId(targetUserId)
+	pending[player] = target
+	return true
+end
+
+return DuelService

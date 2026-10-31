@@ -1,0 +1,13 @@
+-- check_duel.py selftest: every RewardService check must FAIL here (3 problems).
+local RewardService = {}
+
+function RewardService:Start()
+	RateLimit.connect("ClaimDailyReward", function(player, clientDay)
+		local data = DataService.getData(player)
+		local amount = 120 * BossService.bestCoinsPerSec(player)
+		if data.entitlements.vip then amount = amount * 2 DataService.addCoins(player, amount, "Daily") end
+		data.daily.lastDay = clientDay
+	end)
+end
+
+return RewardService
