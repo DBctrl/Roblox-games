@@ -1,10 +1,13 @@
 # Architecture: "Aura Up!" (working title) v1
-_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1.2, 2026-10-31
-(D-017, updated for GDD rev 1 / option A in D-023, sprint-1 contract requests in D-032). Built from docs/gdd.md rev 1, approved by the owner (D-021).
+_Owned by integration-programmer. Sections: see .claude/agents/integration-programmer.md. Version 1.3, 2026-10-31
+(D-017, updated for GDD rev 1 / option A in D-023, sprint-1 contract requests in D-032, sprint-2 contract requests
+in D-051). Built from docs/gdd.md rev 1, approved by the owner (D-021).
 Source of truth for code contracts: `src/shared/Contracts/Remotes.luau` and `src/shared/Contracts/Types.luau`.
 Both must match this file. Applies lawyer rulings D-016 and D-019 (policy gate on Robux eggs only, next-tier-only
-ladder, restricted receipts). Prices are still placeholders (gate 5): they live only in config (`EconomyConfig`,
-`ProductCatalog`), so a price change does not change this contract._
+ladder, restricted receipts). Prices were approved by the owner in D-038; they live only in config
+(`ProductCatalog`, T-069, sprint 3), so a price change does not change this contract. D-038 leaves Speed Sneakers,
+Neon Pup, Neon Icon Fit and the five tips out of v1: `T.ProductKey` still lists all 23 keys, and T-069 decides
+(through a Contract request) whether to trim them or only leave them out of the catalog._
 
 ## Toolchain (cloud session, sprint 1, D-022)
 Binaries live outside the repo in `/home/user/.tools/bin` (git-ignored): StyLua 2.0.2, Selene 0.28.0, Rojo 7.4.4
@@ -143,7 +146,14 @@ function CharacterService.setSpeedMultiplier(player: Player, mult: number): ()
 function CharacterService.setMovementLocked(player: Player, reason: string, locked: boolean): () -- reason-keyed
 function CharacterService.getSpeedMultiplier(player: Player): number
 function CharacterService.isMovementLocked(player: Player): boolean
--- Sprint 1: setLook stores the look id only; applying accessories is T-038 (S2).
+-- setLook (T-038, D-039): lookId must be in MapLayout.LOOK_IDS (else warn + ignore). Clones only `Accessory`
+-- children with a `Handle` from ServerStorage.Assets.Looks.<id> (scripts stripped, massless, no collision), owned
+-- fits first (MapLayout.FIT_IDS order), cap MapLayout.MAX_LOOK_ACCESSORIES (6). Re-applied on respawn and when
+-- SettingShowOwnLook, FirstWin, Vip, StarterPackOwned or MonetizationService.EntitlementsChanged changes.
+-- Caller: RankService (through Deps.character) on load and rank-up.
+-- ZoneService (T-038): getPod reads a 0.5 s server box check of `Pod` parts (writes CurrentPod, fires PodChanged);
+-- isNearEggStand uses the boss rule (INTERACT_RANGE + 6, egg world == player world, layout fallback). The Portal
+-- only sends Notify "World 2 coming Saturday!" (5 s cooldown); teleportToWorld stays unused until T-092.
 
 -- ActivityService
 function ActivityService.tryBegin(player: Player, activity: T.Activity): boolean -- false if not Idle
@@ -177,6 +187,13 @@ function PetService.tryHatch(player: Player, eggId: T.EggId, count: number): (bo
 function PetService.grantEgg(player: Player, eggId: T.EggId, count: number): boolean -- Robux / daily, no cost
 function PetService.getPetMultiplierSum(player: Player): number -- sum of equipped bonuses (before cap)
 function PetService.freeSlots(player: Player): number -- inventory space left
+-- Added in sprint 2 (gameplay request CR-G2, accepted D-051). The EquipPet / DeletePets handlers call exactly
+-- these after their own type checks, so qa drives the real path (QA-F8). Both re-validate every argument, end with
+-- MultiplierService.refresh(player) (CR-c) and rewrite the PetService attributes (1e). Reasons: "NotLoaded",
+-- "BadArgs", "NotOwned", "NoSlot".
+function PetService.setEquipped(player: Player, petUid: string, equip: boolean): (boolean, string?) -- no-op = true
+function PetService.deletePets(player: Player, petUids: { string }): (boolean, string?) -- 1..60 unique owned uids
+-- grantEgg: coin eggs only until T-073 (S3) adds Robux rolls, pity and restrictedGrant.
 
 -- BossService
 BossService.BossWon: RBXScriptSignal -- (player: Player, bossId: string, coins: number, auto: boolean)
@@ -194,7 +211,8 @@ RebirthService.Rebirthed: RBXScriptSignal -- (player: Player, rebirths: number)
 function RebirthService.tryRebirth(player: Player): (boolean, string?) -- rev 1: `skip` argument removed
 function RebirthService.getCost(player: Player): number
 
--- IdleService: no public functions.
+-- IdleService: no public functions. One 1 Hz loop (D-042): pod MP via ZoneService.getPod + PodsMask, Auto-Tap via
+-- TapService.addTaps(.., "Auto"), Auto-Mog via BossService.bestBeatable + tryFight(.., true) every 5 s while Idle.
 -- DuelService
 function DuelService.isInDuel(player: Player): boolean
 -- QuestService
@@ -253,16 +271,23 @@ export type Boss = { id: string, name: string, world: number, mpNeed: number, co
 export type Rank = { name: string, lifetimeMp: number, lookId: string }                 -- lookId = 1f model name
 export type EggPet = { petId: string, weight: number }                                    -- weights sum to ODDS_TOTAL
 export type Egg  = { name: string, world: number, currency: "Coins" | "Robux", price: number,
-	pets: { EggPet }, restrictedGrant: string? }                                          -- filled by T-027 (S2)
-export type Pet  = { name: string, rarity: string, bonus: number }                       -- filled by T-027 (S2)
+	pets: { EggPet }, restrictedGrant: string?, pityAt: number? }                         -- T-027 (D-040)
+	-- price = coins per hatch on coin eggs, 0 on Robux eggs (Robux prices live in ProductCatalog)
+	-- pets listed most common first; restrictedGrant (Robux eggs only) must be a pet in that egg's table
+	-- pityAt (CR-G2): Robux eggs only, 10 = every 10th hatch with no Legendary+ is forced (4b); nil on coin eggs
+export type Pet  = { name: string, rarity: string, bonus: number, fixed: boolean? }      -- T-027 (D-040)
+	-- rarity is one of RARITIES; fixed (CR-G2) = never rolled from an egg (Robux product / Starter Pack grant)
 
 EconomyConfig.TOOLS: { Tool }            -- array, index = tool index 1..12 (ToolIndex)
 EconomyConfig.PODS: { Pod }              -- array, index = PodIndex 1..7 (PodsMask bit i)
 EconomyConfig.BOSSES: { Boss }           -- ARRAY, weakest first; W1 = 1..7, W2 = 8..13
 EconomyConfig.BOSS_BY_ID: { [string]: Boss } -- same rows keyed by id (use this for lookups by id)
 EconomyConfig.RANKS: { Rank }            -- array, index = rank 1..12
-EconomyConfig.EGGS: { [T.EggId]: Egg }   -- map by egg id (empty until T-027)
-EconomyConfig.PETS: { [T.PetId]: Pet }   -- map by pet id (empty until T-027)
+EconomyConfig.EGGS: { [T.EggId]: Egg }   -- map by egg id: BasicEgg, ShinyEgg (coins, W1), StarEgg (Robux, W1),
+                                         -- GalaxyEgg (Robux, W2); NeonEgg/RunwayEgg wait for T-090
+EconomyConfig.PETS: { [T.PetId]: Pet }   -- map by pet id (ids <= 32 chars)
+EconomyConfig.EGG_IDS: { T.EggId }       -- display order of the eggs in EGGS (each exactly once)
+EconomyConfig.RARITIES: { T.Rarity }     -- "Common" .. "Mythic", low to high
 
 EconomyConfig.TAP_CAP_PER_SEC: number          -- 12 (manual + auto, PvE)
 EconomyConfig.TAP_BATCH_MAX: number            -- 30, largest TapBatch count (section 2 #1; TapController sends <= this)
@@ -276,6 +301,16 @@ EconomyConfig.INTERACT_RANGE: number           -- 20 studs (boss stage, egg stan
 EconomyConfig.ODDS_TOTAL: number               -- 10000
 EconomyConfig.COIN_EGGS_POLICY_GATED: boolean  -- false (option A, D-023)
 EconomyConfig.BOSS_FIGHT_SEC / BOSS_COOLDOWN_SEC / BOSS_CYCLE_SEC: number -- 3 / 1 / 4
+-- Eggs (CR-G2 and CR-S2b, D-051). The UI reads these names; do not add aliases.
+EconomyConfig.HATCH_MULTI_COUNT: number         -- 3, the "Hatch x3" count (HatchEgg count is 1 or this)
+EconomyConfig.HATCH_MULTI_REBIRTHS: number      -- 2, "Hatch x3 at Rebirth 2" (CR-S2b: this is the name)
+EconomyConfig.HATCH_LOCK_SEC: number            -- 1, server Hatching activity; the reveal animation is client-only
+EconomyConfig.AUTO_DELETE_RARITY: T.Rarity      -- "Common", what the auto-delete setting removes
+EconomyConfig.PITY_LEGENDARY_WEIGHT: number     -- 9000 } forced pity roll weights, sum = ODDS_TOTAL (4b)
+EconomyConfig.PITY_MYTHIC_WEIGHT: number        -- 1000 }
+-- Automation (read by IdleService and the Settings/HUD UI): AUTO_TAP_FREE_RANK 3, AUTO_TAP_FREE_RATE 3,
+-- AUTO_CLICKER_RATE 6, AUTO_MOG_REBIRTHS 1, AUTO_MOG_INTERVAL_SEC 5. Pet slots: PET_SLOTS_BASE 3,
+-- PET_SLOT_REBIRTHS { 3, 8 }, PET_SLOTS_VIP 1.
 -- Also: REBIRTH_*, WORLD2_REBIRTHS, AUTO_TAP_*, AUTO_CLICKER_RATE, AUTO_MOG_*, PET_SLOT*, VIP/HYPE/COIN_SNACK
 -- multipliers, BOOST_CAP_SEC, HYPE_SNACK_SEC, SPEED_SNEAKERS_SEC, SPEED_WALK_MULT, DUEL_* timings and caps.
 function EconomyConfig.rebirthCost(n: number): number            -- 15000 x 3^(n-1)
@@ -326,10 +361,11 @@ coalesced), so attribute traffic stays inside the budget in section 7.
 | Rank, LookId | number, string | RankService |
 | ToolIndex, PodsMask (bit i = pod i owned) | number | ShopService |
 | EquippedPets (comma list of pet ids, for rendering), PetCount, PetSlots, PityStarEgg, PityGalaxyEgg | string, number x4 | PetService |
+| PetInventory (CR-S2a): comma list of `uid:petId:e`, e = `1` equipped / `0` not, sorted by numeric uid, `""` when empty, <= 66 entries (~1.5 KB max). Written on load and after every hatch, grant, equip, unequip and delete (never on a timer). Read by UI/PetsController and EggController's "you own" ticks via `UI/Util/PetInventory` | string | PetService |
 | FirstWin, BestCoinsPerSec | boolean, number | BossService |
 | MpPerTap | number (ToolPower x M) | TapService |
 | RebirthCost | number | RebirthService |
-| IdleMpPerSec, AutoTapRate, AutoTapUnlocked, AutoMogUnlocked | number, number, boolean, boolean | IdleService (AutoTapUnlocked = Rank >= 3 or Auto Clicker; until IdleService lands in S2, DataService's SetSetting uses its own Rank/AutoClickerOwned check, CR-3) |
+| IdleMpPerSec, AutoTapRate, AutoTapUnlocked, AutoMogUnlocked | number, number, boolean, boolean | IdleService (1 Hz). AutoTapUnlocked = Rank >= `AUTO_TAP_FREE_RANK` or Auto Clicker owned; AutoMogUnlocked = Rebirths >= `AUTO_MOG_REBIRTHS` (CR-3, CR-S2c). DataService's `SetSetting` and UI/SettingsController read these two attributes and never recompute the rule |
 | InDuel, DuelWinsWeek | boolean, number | DuelService |
 | QuestStep, TutorialDone | number, boolean | QuestService |
 | DailyStreak, DailyClaimable, DailyNextClaimUnix | number, boolean, number | RewardService |
@@ -352,6 +388,11 @@ attributes only (section 1f); no code writes map attributes.
 | `Podium` | `Place` 1..3 | top-3 Lifetime MP looks |
 Look/pet/fit templates: builder puts them in `ReplicatedStorage.Assets.Pets` and `ServerStorage.Assets.Looks`
 (models named by pet id / look id). Logged in docs/asset-briefs/asset-log.md.
+**Look and fit names (world request CR-W2, D-051): the lists are `MapLayout.LOOK_IDS` (12 rank looks, must equal
+`EconomyConfig.RANKS[i].lookId` in order; checked equal at the sprint-2 merge) and `MapLayout.FIT_IDS` (5 fits, in
+wear priority: `GoldenGlowFit`, `NeonIconFit`, `VipSparkleAura`, `RookieShades`, `StarterFit`).** Each is a model
+in `ServerStorage.Assets.Looks` holding `Accessory` children only (CharacterService ignores anything else). The
+names below are a copy for the builder; MapLayout wins if they ever differ.
 
 **Builder handoff ids (CR-b, D-032).** The full tag/attribute contract is the header of
 `src/shared/World/MapLayout.luau`.
@@ -498,8 +539,18 @@ display only and never sends it.
 - Odds come from `EconomyConfig.EGGS[eggId].pets` as integer weights summing to 10,000 (0.5% = 50). The UI renders
   the same table as percentages. `EconomyConfig.validate()` asserts the sums at server start and in qa tests.
 - One server `Random.new()` (unseeded = engine seed) owned by PetService; the client never sees or sends a seed.
+- **`src/server/Gameplay/Util/PetRoll.luau`** (gameplay, CR-G2, D-051) is the pure roller. PetService passes its
+  Random; qa passes a seeded one (QA-F7). Server-only (it lives under ServerScriptService):
+  ```luau
+  function PetRoll.total(entries: { EconomyConfig.EggPet }): number                  -- sum of weights
+  function PetRoll.pickWithRoll(entries: { EconomyConfig.EggPet }, r: number): string -- r in [1, total], walks in order
+  function PetRoll.pick(pets: { EconomyConfig.EggPet }, rng: Random): string         -- PetId
+  ```
+- Order of a coin hatch (D-041): roll first, check space with auto-delete applied, then charge + insert + (later)
+  pity in one `DataService.update` that re-checks coins and space. A refused hatch charges nothing and sends nothing.
 - **Pity (Robux eggs only):** `pity[eggId]` counts hatches since the last Legendary-or-better. On the 10th
-  (`pity == 9` before rolling) with no hit, the roll is forced to the Legendary/Mythic subset weighted 90/10. Any
+  (`pity == Egg.pityAt - 1` before rolling) with no hit, the roll is forced to the Legendary/Mythic subset weighted
+  `PITY_LEGENDARY_WEIGHT` / `PITY_MYTHIC_WEIGHT` (90/10). Any
   Legendary+ resets to 0. A 3-pack counts as 3 hatches in order. Coin eggs have no pity.
 - Grants are atomic: cost, roll, inventory insert and pity update in one `DataService.update`. Auto-delete
   Commons (setting) applies after the roll; results report `autoDeleted = true`.
@@ -589,6 +640,22 @@ Bag / Vault, paid Coin Snack, pod unlocks 2-7, Skip Rebirth, Skip to World 2, Au
 | RankUp / Rebirth | progression | each | new rank / rebirth count |
 Never per tap, never more than 1 event per 5 s average per player.
 
+**Who calls what (systems request CR-S2d, D-051; verified in the sprint-2 merge).** Gameplay calls TelemetryService
+only through `Gameplay/Util/Deps.funnel(player, step)` and `Deps.economy(player, flow, amount, reason)`, which look
+the service up at call time and `task.spawn` it (never errors, never yields the caller). Coins are logged by the
+service that moves them, never inside `DataService.addCoins/trySpendCoins` (D-047).
+| Caller | Funnel | Economy |
+|---|---|---|
+| TapService | FirstTap | - |
+| BossService | FirstWin | Source BossWin (coins actually added, QA-8) |
+| ShopService | FirstUpgrade, FirstPod | Sink Tool, Sink Pod |
+| RankService | FirstRankUp | - |
+| PetService | FirstEgg (every HatchResult) | Sink Egg (coin hatch, inside its raw update) |
+| RebirthService | FirstRebirth | Sink Rebirth (the cost; coins above it are reset, not logged) |
+| TelemetryService itself | Spawn (ProfileLoaded), TutorialDone + FirstRebirth (attributes) | - |
+| Sprint 3: RewardService, DuelService, QuestService | - | Source Daily / Code / DuelReward |
+Repeats are cheap (milestones lookup). `custom` (Purchase, Duel*) is MonetizationService / DuelService, sprint 3.
+
 ## 6. Startup order and packages
 ### Server (`src/server/Main.server.luau`, T-026)
 1. `Remotes.setup()` creates `ReplicatedStorage.Remotes` with every remote.
@@ -614,6 +681,20 @@ Wait for `game.Loaded`, then require in order: UI: NotificationController, HudCo
 ShopController, EggController, PetsController, SettingsController, RewardsController, DuelController; Effects:
 EffectsController, PetFollowController, CinematicController, RagdollController. `Init()` all, then `Start()` all. Controllers wait for `DataLoaded == true` and handle
 map parts streaming in/out (StreamingEnabled is on).
+Helpers that are not controllers live in subfolders and are skipped by the bootstrap: `UI/Util` (GameData, Ui,
+UiEvents, PetInventory), `UI/Panels` (started by their host controller: `RebirthPanel` by HudController, D-048),
+`Effects/Util` (EffectPool).
+**HatchResult has two listeners by design** (no UI <-> Effects require): `Effects/CinematicController` plays the
+~2 s reveal overlay (DisplayOrder 45, D-045) and `UI/EggController` shows its result panel after its own ~2 s
+wait (D-049), so the panel appears as the reveal ends. Both only draw the payload; neither rolls or changes it.
+`PlayEffect RankUp` is handled only by CinematicController (D-044); `Rebirth`, `BossWin` etc. by EffectsController.
+
+### Sprint-2 integration (T-048, D-051)
+Both bootstraps already listed every sprint-2 module in dependency order (sprint-1 T-026), so no order change was
+needed: server Data `TelemetryService`, Gameplay `PetService` (L1), `RebirthService` (L2), `IdleService` (L3);
+client UI `EggController`, `PetsController`, `SettingsController`, Effects `PetFollowController`,
+`CinematicController`. `QuestService`, `DuelService`, `RewardService`, `MonetizationService`, `LeaderboardService`,
+`RewardsController`, `DuelController` and `RagdollController` are still skipped (sprint 3).
 
 ### Wally packages
 | Package | Realm | Use | Why |
@@ -638,7 +719,7 @@ integration ticket.** No framework (the bootstrap replaces Knit), no networking 
 | Particles / sounds | <= 300 particles alive; tap sparkles pooled (20); <= 8 concurrent sounds |
 | Client frame time | Effects <= 2 ms, UI <= 1 ms per frame on low-end mobile |
 | Remote traffic | C->S <= 3 msgs/s avg per player (TapBatch 2/s); S->C <= 2 KB/s per player |
-| Attribute writes | flushed <= 5 Hz per player; IdleService loop 1 Hz for all players |
+| Attribute writes | flushed <= 5 Hz per player; IdleService loop 1 Hz for all players; `PetInventory` (<= ~1.5 KB) only on pet events, never on a timer |
 | Server | server script time <= 6 % at 12 players; one 1 Hz loop, no per-player loops |
 | DataStore | ProfileStore auto-save + on leave; leaderboard writes <= 4 per player per 60 s; reads every 120 s |
 | Streaming | StreamingEnabled on; boss stages, rings and podium `Atomic`; code never assumes a part is streamed in |
@@ -658,3 +739,9 @@ Programmers add requests through their summary; team-lead routes them here. inte
 | CR-3 | systems (T-012) | `DataService.saveAndConfirm`; an owner for an `AutoTapUnlocked` attribute | **Accepted** (D-032). saveAndConfirm is Data-internal (3b). `AutoTapUnlocked` added to `Types.PlayerAttr`, writer **IdleService** (S2); DataService switches its SetSetting check to the attribute when IdleService lands |
 | CR-4 | systems (T-014, T-015) | UI field names for BOSSES/TOOLS/RANKS; `MapLayout.getBossStage`, `getShopStands(kind)`; who creates the Tool Stand ProximityPrompt | **Decided** (D-032). Canonical names are EconomyConfig's as merged (1c: `world`, not `worldId`; BOSSES is an array + BOSS_BY_ID). `getBossStage` exists but may return a Model; `getShopStands` will not be added: use `getShopKindOf` on the prompt's ancestors. Builder creates the stand prompts (1f). Follow-up fixes in docs/qa/build-1.md (systems) |
 | QA-F4 | qa (T-024) | Name the EconomyConfig entry fields and BOSSES shape; add TAP_BATCH_MAX to 1c | **Done** (D-032). 1c lists every entry type; pods use `mpPerSec`, bosses `mpNeed`/`coins`/`world`, tools `mpPerTap`/`cost`/`world`, ranks `lifetimeMp`/`lookId` |
+| CR-G2 | gameplay (T-027, T-028, QA-F7, QA-F8) | `PetService.setEquipped` / `deletePets` in 1b; `Util/PetRoll` in 4b; `Egg.pityAt`, `Pet.fixed` and constants HATCH_*, AUTO_DELETE_RARITY, PITY_*_WEIGHT, RARITIES, EGG_IDS in 1c | **Accepted** (D-051), as merged. Listed in 1b, 1c and 4b. 4b pity now reads `pityAt` and the PITY weights |
+| CR-W2 | world (T-038) | Point 1f at `MapLayout.LOOK_IDS` / `FIT_IDS` for look and fit names | **Accepted** (D-051). 1f names MapLayout as the source; LOOK_IDS checked equal to `RANKS[i].lookId` at merge |
+| CR-S2a | systems (T-035, T-036) BLOCKER for the Pets panel | `PetInventory` attribute with pet uids, PetService the single writer | **Accepted** (D-051) with systems' format: `uid:petId:e` comma list, sorted by numeric uid, `""` when empty (1e). `Types.PlayerAttr.PetInventory` added. **Open: PetService must write it** (gameplay fix, sprint-2 FIX); `UI/Util/PetInventory` switches to `Attr.PetInventory` |
+| CR-S2b | systems (T-035) | Name the "Hatch x3 at Rebirth 2" constant | **Decided** (D-051): `EconomyConfig.HATCH_MULTI_REBIRTHS` (count `HATCH_MULTI_COUNT`). No alias is added; `UI/Util/GameData` must read this name (systems fix) |
+| CR-S2c | systems (T-034) | Attribute names `AutoTapUnlocked` / `AutoMogUnlocked`, written by IdleService | **Accepted** (D-051). Both in `Types.PlayerAttr`, writer IdleService (1e); SetSetting already reads them (QA-3) |
+| CR-S2d | systems (T-033) | Telemetry hooks: `Deps.funnel` / `Deps.economy` calls from Gameplay | **Accepted and verified** (D-051): every step and coin flow in section 5 "Who calls what" is called in the merged code; nothing missing for sprint 2 |

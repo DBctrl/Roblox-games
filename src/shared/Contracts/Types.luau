@@ -293,6 +293,11 @@ Types.PlayerAttr = table.freeze({
 	PodsMask = "PodsMask", -- number, bit i = pod i owned
 	-- PetService
 	EquippedPets = "EquippedPets", -- string, comma-separated pet ids (for rendering)
+	-- PetInventory (CR-S2a, D-051): string, comma-separated `uid:petId:e` entries (e = "1" equipped, "0" not),
+	-- sorted by numeric uid, no spaces, "" when empty, at most INVENTORY_HARD_CAP (66) entries. Example
+	-- "1:PuffPup:1,2:BubbleBunny:0". PetService is the single writer: on profile load and after every hatch,
+	-- grant, equip, unequip and delete. Display only: the server re-checks every uid the client sends.
+	PetInventory = "PetInventory",
 	PetCount = "PetCount", -- number
 	PetSlots = "PetSlots", -- number
 	PityStarEgg = "PityStarEgg", -- number 0..9
@@ -307,8 +312,8 @@ Types.PlayerAttr = table.freeze({
 	-- IdleService
 	IdleMpPerSec = "IdleMpPerSec", -- number
 	AutoTapRate = "AutoTapRate", -- number taps/s, 0 = off
-	AutoTapUnlocked = "AutoTapUnlocked", -- boolean: Rank >= 3 or Auto Clicker owned (CR-3; read by SetSetting)
-	AutoMogUnlocked = "AutoMogUnlocked", -- boolean
+	AutoTapUnlocked = "AutoTapUnlocked", -- boolean: Rank >= AUTO_TAP_FREE_RANK or Auto Clicker (CR-3; SetSetting reads it)
+	AutoMogUnlocked = "AutoMogUnlocked", -- boolean: Rebirths >= AUTO_MOG_REBIRTHS (CR-S2c; SetSetting reads it)
 	-- DuelService
 	InDuel = "InDuel", -- boolean
 	DuelWinsWeek = "DuelWinsWeek", -- number

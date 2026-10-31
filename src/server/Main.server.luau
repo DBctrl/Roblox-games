@@ -52,7 +52,7 @@ local ORDER: { { folder: string, modules: { string } } } = {
 			-- L3
 			"IdleService", -- S2
 			"DuelService", -- S3
-			"QuestService", -- S2
+			"QuestService", -- S3
 			"RewardService", -- S3
 		},
 	},
